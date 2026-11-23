@@ -79,3 +79,90 @@ sync_netalertx:
 reload:
   name: Reload Shelly Guard
   description: Reload the Shelly Guard integration and its configuration.
+
+set_metadata:
+  name: Update purchase & warranty info
+  description: Save purchase date, warranty duration, vendor, invoice number and notes for a Shelly device.
+  fields:
+    mac:
+      name: MAC address
+      required: true
+      selector:
+        text:
+    purchase_date:
+      name: Purchase date (YYYY-MM-DD)
+      required: false
+      selector:
+        text:
+    warranty_months:
+      name: Warranty duration (months)
+      default: 36
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 120
+    vendor:
+      name: Vendor / Store
+      required: false
+      selector:
+        text:
+    invoice_number:
+      name: Invoice / Order number
+      required: false
+      selector:
+        text:
+    notes:
+      name: Notes
+      required: false
+      selector:
+        text:
+
+set_lifecycle:
+  name: Set device lifecycle status
+  description: Mark a Shelly device as active, faulty, or replaced.
+  fields:
+    mac:
+      name: MAC address
+      required: true
+      selector:
+        text:
+    lifecycle:
+      name: Lifecycle status
+      required: true
+      selector:
+        select:
+          options:
+            - active
+            - faulty
+            - replaced
+    reason:
+      name: Fault / status reason
+      required: false
+      selector:
+        text:
+
+confirm_new_device:
+  name: Confirm newly detected Shelly as new
+  description: Dismiss the replacement prompt and register a newly detected Shelly as a brand-new device.
+  fields:
+    mac:
+      name: MAC address
+      required: true
+      selector:
+        text:
+
+replace_device:
+  name: Replace faulty Shelly with a new device
+  description: Restore the latest backup of a faulty/offline Shelly onto a new Shelly and archive the old device as replaced.
+  fields:
+    old_mac:
+      name: Faulty / old device MAC
+      required: true
+      selector:
+        text:
+    new_mac:
+      name: Replacement / new device MAC
+      required: true
+      selector:
+        text:

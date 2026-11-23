@@ -28,6 +28,12 @@
   * Tabela com estado online/offline, link direto `http://host:port`, estado e data de backup, tipo de configuração (`Gen · Wi-Fi/Ethernet/Range Extender · Estático/DHCP`), proteção *hardened* e firmware atual;
   * **Botão Upgrade** por dispositivo (fica ativo apenas quando existe firmware novo disponível e instala via `update.install`);
   * **Botão Check** por dispositivo (`shelly_guard.check_device`).
+* **Lista de Avariados & Assistente de Substituição (v1.1.0):**
+  * Marca manualmente qualquer dispositivo como **Avariado** (preservando o último backup e os dados de fatura/garantia mesmo que seja removido do HA);
+  * Quando entra um **Shelly novo** na rede (detetado em tempo real), o dashboard abre uma janela para escolher se é um **dispositivo novo** ou se vem **substituir um dispositivo avariado/offline**, restaurando automaticamente todo o backup no equipamento novo e arquivando o antigo como *Substituído*.
+* **Registo de Compra & Garantia (v1.1.0):**
+  * Guarda por dispositivo: **data de compra**, **duração da garantia** (36 meses por defeito), **vendedor/loja**, **nº de fatura** e notas (em `/share/shelly_guard/metadata.json`);
+  * Mostra na tabela a validade da garantia (*Em garantia*, *Expira em breve*, *Expirada*) e destaca loja + nº de fatura nos dispositivos avariados para pedir RMA rapidamente.
 * **Extras opcionais:** sincronização de nomes/áreas com **NetAlertX**, auditoria de scripts/webhooks duplicados e gestão de reservas DHCP em routers **ASUS** (via integração `AsusRouter`).
 
 ---
@@ -64,6 +70,10 @@ Copia a pasta `custom_components/shelly_guard` para `/config/custom_components/s
 | `shelly_guard.router_dhcp` | Compara/adiciona reservas DHCP num router ASUS (ignora clientes em Range Extender). |
 | `shelly_guard.sync_netalertx` | Envia nomes e áreas do HA para o NetAlertX (se configurado nas opções). |
 | `shelly_guard.reload` | Recarrega a integração Shelly Guard. |
+| `shelly_guard.set_metadata` | Guarda data de compra, garantia, vendedor, nº de fatura e notas de um dispositivo. |
+| `shelly_guard.set_lifecycle` | Marca um dispositivo como `active`, `faulty` (avariado) ou `replaced` (substituído). |
+| `shelly_guard.confirm_new_device` | Confirma um Shelly recém-detetado como dispositivo novo. |
+| `shelly_guard.replace_device` | Restaura o backup de `old_mac` para `new_mac` e arquiva o dispositivo antigo como substituído. |
 
 ---
 

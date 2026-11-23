@@ -59,9 +59,13 @@ class ShellyGuardManager:
         self.offline_runs: dict[str, int] = {}
         self.notified: dict[str, str] = {}
         self.last_scan_ts: float = 0.0
+        self.metadata: dict[str, dict[str, Any]] = {}
+        self.pending_new_devices: dict[str, dict[str, Any]] = {}
         self.device_table: dict[str, dict[str, Any]] = {}
         self.status: dict[str, Any] = {
             "devices": 0,
+            "faulty": 0,
+            "pending_new": 0,
             "offline": [],
             "reset_detected": [],
             "restored": [],
@@ -78,19 +82,108 @@ class ShellyGuardManager:
             return self.entry.options[key]
         return self.entry.data.get(key, default)
 
+    async def _save_metadata(self) -> None:
+        await self.hass.async_add_executor_job(core.write_metadata, self.backup_dir, self.metadata)
+
+    def _touch_meta_snapshot(self, mac: str, dev: dict[str, Any]) -> dict[str, Any]:
+        m = self.metadata.setdefault(mac, {})
+        m["last_name"] = dev.get("name") or m.get("last_name") or mac
+        if dev.get("area"):
+            m["last_area"] = dev["area"]
+        if dev.get("model"):
+            m["last_model"] = dev["model"]
+        if dev.get("host"):
+            m["last_host"] = dev["host"]
+        if dev.get("port"):
+            m["last_port"] = int(dev["port"])
+        if dev.get("gen"):
+            m["last_gen"] = int(dev["gen"])
+        m.setdefault("lifecycle", "active")
+        return m
+
     async def async_init(self) -> None:
         pref = self._cfg(CONF_BACKUP_DIR, DEFAULT_BACKUP_DIR)
         self.backup_dir = await self.hass.async_add_executor_job(core.resolve_dir, pref, DEFAULT_BACKUP_DIR)
+        self.metadata = await self.hass.async_add_executor_job(core.read_metadata, self.backup_dir)
         await self._seed_table_from_registry()
         self._publish()
 
     async def _seed_table_from_registry(self) -> None:
-        """Populate initial device rows from HA registries + existing backups on disk."""
+        """Populate initial device rows from HA registries + existing backups + faulty/replaced metadata."""
         inv = self.shelly_inventory()
+        first_seed = len(self.metadata) == 0
+        meta_changed = False
         for mac, dev in inv.items():
+            m = self._touch_meta_snapshot(mac, dev)
+            if first_seed and not m.get("known"):
+                m["known"] = True
+                meta_changed = True
             backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
-            self.device_table[mac] = core.build_device_row(mac, dev, cur=None, backup=backup, online=True)
+            self.device_table[mac] = core.build_device_row(
+                mac, dev, cur=None, backup=backup, online=True, meta=m
+            )
+        # Keep faulty / replaced devices visible even if removed from HA Shelly integration
+        for mac, m in self.metadata.items():
+            if mac not in self.device_table and m.get("lifecycle") in ("faulty", "replaced"):
+                backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
+                stub = {
+                    "mac": mac,
+                    "name": m.get("last_name") or (backup or {}).get("name") or mac,
+                    "area": m.get("last_area") or (backup or {}).get("area") or "",
+                    "host": m.get("last_host") or (backup or {}).get("host") or "",
+                    "port": int(m.get("last_port") or (backup or {}).get("port") or 80),
+                    "gen": int(m.get("last_gen") or (backup or {}).get("gen") or 1),
+                    "model": m.get("last_model") or (backup or {}).get("model") or "",
+                }
+                self.device_table[mac] = core.build_device_row(
+                    mac, stub, cur=None, backup=backup, online=False, meta=m
+                )
+        if meta_changed:
+            await self._save_metadata()
         self.status["devices"] = len(inv)
+        await self.async_detect_new_devices(inv=inv, notify=False)
+
+    async def async_detect_new_devices(
+        self, inv: dict[str, dict[str, Any]] | None = None, notify: bool = True
+    ) -> None:
+        """Detect newly added Shelly MACs when faulty or offline devices exist."""
+        inv = inv if inv is not None else self.shelly_inventory()
+        candidates_exist = any(
+            (r.get("lifecycle") == "faulty") or (not r.get("online") and r.get("lifecycle") == "active")
+            for r in self.device_table.values()
+        )
+        meta_changed = False
+        for mac, dev in inv.items():
+            m = self._touch_meta_snapshot(mac, dev)
+            if m.get("known"):
+                self.pending_new_devices.pop(mac, None)
+                continue
+            if not candidates_exist:
+                m["known"] = True
+                meta_changed = True
+                continue
+            if mac not in self.pending_new_devices:
+                self.pending_new_devices[mac] = {
+                    "mac": mac,
+                    "name": dev["name"],
+                    "area": dev.get("area") or "",
+                    "model": dev.get("model") or "",
+                    "host": dev["host"],
+                    "port": int(dev.get("port") or 80),
+                    "gen": int(dev.get("gen") or 1),
+                    "detected_at": datetime.datetime.now().isoformat(timespec="seconds"),
+                }
+                if notify:
+                    await self._notify(
+                        "Novo Shelly detetado",
+                        f"{dev['name']} ({dev.get('model') or 'Shelly'}) entrou na rede. "
+                        "Abre o painel Shelly Guard para confirmar se é novo ou se substitui um dispositivo avariado.",
+                    )
+        # Drop pending entries that disappeared from HA
+        for stale in [m for m in list(self.pending_new_devices) if m not in inv]:
+            self.pending_new_devices.pop(stale, None)
+        if meta_changed:
+            await self._save_metadata()
 
     def shelly_inventory(self) -> dict[str, dict[str, Any]]:
         dreg = dr.async_get(self.hass)
@@ -145,16 +238,22 @@ class ShellyGuardManager:
     def get_state_payload(self) -> dict[str, Any]:
         rows = sorted(
             self.device_table.values(),
-            key=lambda x: (x.get("online", True), (x.get("name") or "").lower()),
+            key=lambda x: (
+                0 if x.get("lifecycle") == "faulty" else (1 if not x.get("online", True) else 2),
+                (x.get("name") or "").lower(),
+            ),
         )
         return {
             "updated_at": self.status.get("state_ts"),
             "status": self.status,
             "devices": rows,
+            "pending_new_devices": list(self.pending_new_devices.values()),
         }
 
     def _publish(self) -> None:
         self.status["state_ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+        self.status["faulty"] = sum(1 for r in self.device_table.values() if r.get("lifecycle") == "faulty")
+        self.status["pending_new"] = len(self.pending_new_devices)
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
     async def _notify(self, title: str, message: str) -> None:
@@ -313,19 +412,22 @@ class ShellyGuardManager:
             all_offline: dict[str, dict[str, Any]] = {}
 
             for mac, dev in inv.items():
+                meta = self._touch_meta_snapshot(mac, dev)
+                lifecycle = meta.get("lifecycle") or "active"
                 backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
                 try:
                     cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
                 except Exception as e:
                     err_msg = f"{type(e).__name__} {str(e)[:120]}"
-                    offline.append(f"{dev['name']}: {err_msg}")
-                    all_offline[mac] = dev
+                    if lifecycle == "active":
+                        offline.append(f"{dev['name']}: {err_msg}")
+                        all_offline[mac] = dev
+                        self.offline_runs[mac] = self.offline_runs.get(mac, 0) + 1
+                        if self.offline_runs[mac] >= 2:
+                            offline_devs[mac] = dev
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=None, backup=backup, online=False, err=err_msg
+                        mac, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta
                     )
-                    self.offline_runs[mac] = self.offline_runs.get(mac, 0) + 1
-                    if self.offline_runs[mac] >= 2:
-                        offline_devs[mac] = dev
                     continue
 
                 if self.offline_runs.pop(mac, 0) and mac in self.notified:
@@ -356,7 +458,7 @@ class ShellyGuardManager:
                     self.suspect[mac] = self.suspect.get(mac, 0) + 1
                     resets.append(dev["name"])
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=cur, backup=backup, online=True, reset=True
+                        mac, dev, cur=cur, backup=backup, online=True, reset=True, meta=meta
                     )
                     if self.suspect[mac] < 2:
                         continue
@@ -401,14 +503,19 @@ class ShellyGuardManager:
                     saved += 1
                     if core.reset_by_input_enabled(final):
                         risky.append(dev["name"])
-                    self.device_table[mac] = core.build_device_row(mac, dev, cur=final, backup=final, online=True)
+                    self.device_table[mac] = core.build_device_row(
+                        mac, dev, cur=final, backup=final, online=True, meta=meta
+                    )
                 except Exception as e:
                     errors.append(f"{dev['name']} backup: {e}")
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=cur, backup=backup, online=True, err=str(e)
+                        mac, dev, cur=cur, backup=backup, online=True, err=str(e), meta=meta
                     )
 
-            for stale in [m for m in list(self.device_table) if m not in inv]:
+            for stale in [
+                m for m in list(self.device_table)
+                if m not in inv and (self.metadata.get(m) or {}).get("lifecycle") not in ("faulty", "replaced")
+            ]:
                 self.device_table.pop(stale, None)
 
             re_resolved = await self._resolve_via_range_extenders(all_offline, range_extenders)
@@ -419,12 +526,13 @@ class ShellyGuardManager:
                 dev_re = dict(all_offline[cmac])
                 dev_re["host"] = rinfo["host"]
                 dev_re["port"] = rinfo["port"]
+                cmeta = self._touch_meta_snapshot(cmac, dev_re)
                 try:
                     cur_re = await self.hass.async_add_executor_job(core.fetch_device, dev_re, du, dp)
                     await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, cmac, cur_re, keep)
                     saved += 1
                     self.device_table[cmac] = core.build_device_row(
-                        cmac, dev_re, cur=cur_re, backup=cur_re, online=True
+                        cmac, dev_re, cur=cur_re, backup=cur_re, online=True, meta=cmeta
                     )
                 except Exception:
                     if cmac in self.device_table:
@@ -436,6 +544,9 @@ class ShellyGuardManager:
             if offline_devs and time.time() - self.last_scan_ts >= scan_every:
                 await self._scan_for_reset_aps(offline_devs, online_gen2)
                 self.last_scan_ts = time.time()
+
+            await self.async_detect_new_devices(inv=inv, notify=True)
+            await self._save_metadata()
 
             self.status.update(
                 reset_detected=resets,
@@ -464,6 +575,7 @@ class ShellyGuardManager:
         harden = bool(self._cfg(CONF_HARDEN, DEFAULT_HARDEN))
         du = self._cfg(CONF_SHELLY_USER, DEFAULT_SHELLY_USER) or DEFAULT_SHELLY_USER
         dp = self._cfg(CONF_SHELLY_PASSWORD, "") or ""
+        meta = self._touch_meta_snapshot(m, dev)
         backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, m)
 
         try:
@@ -480,13 +592,13 @@ class ShellyGuardManager:
                     cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
                 except Exception as e2:
                     self.device_table[m] = core.build_device_row(
-                        m, dev, cur=None, backup=backup, online=False, err=str(e2)
+                        m, dev, cur=None, backup=backup, online=False, err=str(e2), meta=meta
                     )
                     self._publish()
                     return
             else:
                 self.device_table[m] = core.build_device_row(
-                    m, dev, cur=None, backup=backup, online=False, err=err_msg
+                    m, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta
                 )
                 self._publish()
                 return
@@ -503,10 +615,121 @@ class ShellyGuardManager:
         except Exception as e:
             _LOGGER.warning("[shelly_guard] single backup %s: %s", dev["name"], e)
 
-        self.device_table[m] = core.build_device_row(m, dev, cur=cur, backup=cur, online=True)
+        self.device_table[m] = core.build_device_row(m, dev, cur=cur, backup=cur, online=True, meta=meta)
         self.status["offline"] = [o for o in self.status.get("offline", []) if not o.startswith(f"{dev['name']}:")]
         self.status["last_device_check"] = f"{dev['name']} @ {datetime.datetime.now().strftime('%H:%M:%S')}"
+        await self._save_metadata()
         self._publish()
+
+    async def async_set_metadata(
+        self,
+        mac: str,
+        purchase_date: str | None = None,
+        warranty_months: int | None = None,
+        vendor: str | None = None,
+        invoice_number: str | None = None,
+        notes: str | None = None,
+    ) -> None:
+        m = core.norm_mac(mac or "")
+        if not m:
+            return
+        meta = self.metadata.setdefault(m, {"lifecycle": "active", "known": True})
+        if purchase_date is not None:
+            meta["purchase_date"] = str(purchase_date).strip()
+        if warranty_months is not None:
+            meta["warranty_months"] = int(warranty_months)
+        if vendor is not None:
+            meta["vendor"] = str(vendor).strip()
+        if invoice_number is not None:
+            meta["invoice_number"] = str(invoice_number).strip()
+        if notes is not None:
+            meta["notes"] = str(notes).strip()
+        await self._save_metadata()
+        if m in self.device_table:
+            w = core.compute_warranty(meta)
+            self.device_table[m].update(
+                vendor=meta.get("vendor") or "",
+                invoice_number=meta.get("invoice_number") or "",
+                notes=meta.get("notes") or "",
+                **w,
+            )
+        self._publish()
+
+    async def async_set_lifecycle(self, mac: str, lifecycle: str, reason: str = "") -> None:
+        m = core.norm_mac(mac or "")
+        if not m or lifecycle not in ("active", "faulty", "replaced"):
+            return
+        meta = self.metadata.setdefault(m, {"known": True})
+        meta["lifecycle"] = lifecycle
+        meta["known"] = True
+        today = datetime.date.today().isoformat()
+        if lifecycle == "faulty":
+            meta["faulty_at"] = today
+            meta["faulty_reason"] = str(reason or "").strip()
+            self.offline_runs.pop(m, None)
+            self.notified.pop(m, None)
+        elif lifecycle == "active":
+            meta["faulty_at"] = ""
+            meta["faulty_reason"] = ""
+        elif lifecycle == "replaced":
+            meta["replaced_at"] = today
+        await self._save_metadata()
+        if m in self.device_table:
+            self.device_table[m]["lifecycle"] = lifecycle
+            self.device_table[m]["faulty_at"] = meta.get("faulty_at") or ""
+            self.device_table[m]["faulty_reason"] = meta.get("faulty_reason") or ""
+            self.device_table[m]["replaced_at"] = meta.get("replaced_at") or ""
+        self._publish()
+
+    async def async_confirm_new_device(self, mac: str) -> None:
+        m = core.norm_mac(mac or "")
+        if not m:
+            return
+        meta = self.metadata.setdefault(m, {"lifecycle": "active"})
+        meta["known"] = True
+        meta["lifecycle"] = "active"
+        self.pending_new_devices.pop(m, None)
+        await self._save_metadata()
+        await self.async_check_device(m)
+
+    async def async_replace_device(self, old_mac: str, new_mac: str) -> dict[str, Any]:
+        om = core.norm_mac(old_mac or "")
+        nm = core.norm_mac(new_mac or "")
+        if not om or not nm or om == nm:
+            return {"error": "invalid old_mac/new_mac"}
+        res = await self.async_restore(mac=nm, dry_run=False, backup_mac=om)
+        if res.get("error"):
+            await self._notify("Erro na substituição Shelly", f"{om} → {nm}: {res['error']}")
+            return res
+        today = datetime.date.today().isoformat()
+        old_meta = self.metadata.setdefault(om, {})
+        old_meta["lifecycle"] = "replaced"
+        old_meta["replaced_by"] = nm
+        old_meta["replaced_at"] = today
+        old_meta["known"] = True
+
+        new_meta = self.metadata.setdefault(nm, {})
+        new_meta["lifecycle"] = "active"
+        new_meta["known"] = True
+        new_meta["replaces"] = om
+        self.pending_new_devices.pop(nm, None)
+        await self._save_metadata()
+
+        if om in self.device_table:
+            self.device_table[om]["lifecycle"] = "replaced"
+            self.device_table[om]["replaced_by"] = nm
+            self.device_table[om]["replaced_at"] = today
+
+        await self.async_check_device(nm)
+        old_name = (self.device_table.get(om) or {}).get("name") or old_meta.get("last_name") or om
+        done = res.get("done") or []
+        failed = res.get("failed") or []
+        await self._notify(
+            "Shelly substituído com sucesso",
+            f"Backup de {old_name} ({om}) restaurado em {nm}: {len(done)} passos ok"
+            + (f", avisos: {'; '.join(failed)}" if failed else "."),
+        )
+        return res
 
     async def async_backup_all(self) -> None:
         inv = self.shelly_inventory()

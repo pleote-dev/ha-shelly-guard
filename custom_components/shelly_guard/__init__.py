@@ -68,17 +68,26 @@ async def _async_register_frontend(hass: HomeAssistant, show_sidebar: bool) -> N
         domain_data["static_registered"] = True
 
     if show_sidebar and not domain_data.get("panel_registered"):
-        await panel_custom.async_register_panel(
-            hass,
-            webcomponent_name="shelly-guard-panel",
-            frontend_url_path=PANEL_URL_PATH,
-            sidebar_title="Shelly Guard",
-            sidebar_icon="mdi:shield-sync",
-            module_url=f"{STATIC_URL_PATH}/shelly-guard-panel.js?v={VERSION}",
-            embed_iframe=False,
-            require_admin=False,
-        )
-        domain_data["panel_registered"] = True
+        try:
+            await panel_custom.async_register_panel(
+                hass,
+                webcomponent_name="shelly-guard-panel",
+                frontend_url_path=PANEL_URL_PATH,
+                sidebar_title="Shelly Guard",
+                sidebar_icon="mdi:shield-sync",
+                module_url=f"{STATIC_URL_PATH}/shelly-guard-panel.js?v={VERSION}",
+                embed_iframe=False,
+                require_admin=False,
+            )
+            domain_data["panel_registered"] = True
+        except ValueError as err:
+            _LOGGER.warning(
+                "[shelly_guard] Sidebar panel '%s' already exists (%s). "
+                "Remove any legacy Lovelace dashboard with url_path '%s' and reload Shelly Guard.",
+                PANEL_URL_PATH,
+                err,
+                PANEL_URL_PATH,
+            )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -131,6 +140,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _svc_reload(call: ServiceCall) -> None:
         await hass.config_entries.async_reload(entry.entry_id)
 
+    async def _svc_set_metadata(call: ServiceCall) -> None:
+        await manager.async_set_metadata(
+            mac=call.data.get("mac", ""),
+            purchase_date=call.data.get("purchase_date"),
+            warranty_months=call.data.get("warranty_months"),
+            vendor=call.data.get("vendor"),
+            invoice_number=call.data.get("invoice_number"),
+            notes=call.data.get("notes"),
+        )
+
+    async def _svc_set_lifecycle(call: ServiceCall) -> None:
+        await manager.async_set_lifecycle(
+            mac=call.data.get("mac", ""),
+            lifecycle=call.data.get("lifecycle", "active"),
+            reason=call.data.get("reason", ""),
+        )
+
+    async def _svc_confirm_new(call: ServiceCall) -> None:
+        hass.async_create_task(manager.async_confirm_new_device(call.data.get("mac", "")))
+
+    async def _svc_replace(call: ServiceCall) -> None:
+        hass.async_create_task(
+            manager.async_replace_device(
+                old_mac=call.data.get("old_mac", ""),
+                new_mac=call.data.get("new_mac", ""),
+            )
+        )
+
     services: dict[str, Any] = {
         "check": _svc_check,
         "check_device": _svc_check_device,
@@ -141,9 +178,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "router_dhcp": _svc_router_dhcp,
         "sync_netalertx": _svc_sync_nax,
         "reload": _svc_reload,
+        "set_metadata": _svc_set_metadata,
+        "set_lifecycle": _svc_set_lifecycle,
+        "confirm_new_device": _svc_confirm_new,
+        "replace_device": _svc_replace,
     }
     for name, handler in services.items():
         hass.services.async_register(DOMAIN, name, handler)
+
+    # Detect newly added Shelly devices immediately
+    async def _on_device_reg_updated(event: Any) -> None:
+        if event.data.get("action") == "create":
+            await manager.async_detect_new_devices(notify=True)
+            manager._publish()
+
+    unsub_dev_reg = hass.bus.async_listen("device_registry_updated", _on_device_reg_updated)
+    entry.async_on_unload(unsub_dev_reg)
 
     # Periodic check & nightly backup
     interval_min = int(
@@ -205,6 +255,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for svc in (
             "check", "check_device", "backup_all", "restore",
             "scan", "audit", "router_dhcp", "sync_netalertx", "reload",
+            "set_metadata", "set_lifecycle", "confirm_new_device", "replace_device",
         ):
             if hass.services.has_service(DOMAIN, svc):
                 hass.services.async_remove(DOMAIN, svc)

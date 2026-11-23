@@ -16,7 +16,7 @@ from typing import Any
 import requests
 import urllib3
 
-from .const import HTTP_TIMEOUT, MARKER_KEY
+from .const import DEFAULT_WARRANTY_MONTHS, HTTP_TIMEOUT, MARKER_KEY
 
 
 def resolve_dir(preferred: str, fallback: str = "/share/shelly_guard") -> str:
@@ -192,6 +192,80 @@ def write_index(backup_dir: str, index: dict[str, Any]) -> None:
     os.makedirs(backup_dir, exist_ok=True)
     with open(os.path.join(backup_dir, "index.json"), "w", encoding="utf-8") as f:
         json.dump(index, f, indent=1, sort_keys=True)
+
+
+def read_metadata(backup_dir: str) -> dict[str, dict[str, Any]]:
+    p = os.path.join(backup_dir, "metadata.json")
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def write_metadata(backup_dir: str, metadata: dict[str, dict[str, Any]]) -> None:
+    os.makedirs(backup_dir, exist_ok=True)
+    p = os.path.join(backup_dir, "metadata.json")
+    tmp = f"{p}.{os.getpid()}.{time.time_ns()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True, ensure_ascii=False)
+    os.replace(tmp, p)
+
+
+def _add_months(d: datetime.date, months: int) -> datetime.date:
+    y = d.year + (d.month - 1 + months) // 12
+    m = (d.month - 1 + months) % 12 + 1
+    # clamp day to end of month
+    next_m = datetime.date(y + (m // 12), (m % 12) + 1, 1)
+    max_day = (next_m - datetime.timedelta(days=1)).day
+    return datetime.date(y, m, min(d.day, max_day))
+
+
+def compute_warranty(meta: dict[str, Any] | None) -> dict[str, Any]:
+    """Return warranty_until (YYYY-MM-DD), days_left, and status (valid|expiring|expired|unknown)."""
+    m = meta or {}
+    pdate_str = str(m.get("purchase_date") or "").strip()
+    months = m.get("warranty_months")
+    try:
+        months_int = int(months) if months not in (None, "") else DEFAULT_WARRANTY_MONTHS
+    except Exception:
+        months_int = DEFAULT_WARRANTY_MONTHS
+    if not pdate_str:
+        return {
+            "purchase_date": "",
+            "warranty_months": months_int,
+            "warranty_until": "",
+            "warranty_days_left": None,
+            "warranty_status": "unknown",
+        }
+    try:
+        pdate = datetime.date.fromisoformat(pdate_str[:10])
+    except Exception:
+        return {
+            "purchase_date": pdate_str,
+            "warranty_months": months_int,
+            "warranty_until": "",
+            "warranty_days_left": None,
+            "warranty_status": "unknown",
+        }
+    until = _add_months(pdate, max(0, months_int))
+    days_left = (until - datetime.date.today()).days
+    if days_left < 0:
+        status = "expired"
+    elif days_left <= 90:
+        status = "expiring"
+    else:
+        status = "valid"
+    return {
+        "purchase_date": pdate.isoformat(),
+        "warranty_months": months_int,
+        "warranty_until": until.isoformat(),
+        "warranty_days_left": days_left,
+        "warranty_status": status,
+    }
 
 
 def nax_update(url: str, token: str, mac: str, column: str, value: str) -> tuple[int, str]:
@@ -634,16 +708,19 @@ def build_device_row(
     online: bool = True,
     reset: bool = False,
     err: str = "",
+    meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     bk = backup or cur
+    m = meta or {}
+    w = compute_warranty(m)
     return {
         "mac": mac,
-        "name": dev["name"],
-        "area": dev.get("area") or "",
-        "host": dev["host"],
-        "port": int(dev.get("port") or 80),
-        "gen": int(dev.get("gen") or 1),
-        "model": dev.get("model") or "",
+        "name": dev.get("name") or m.get("last_name") or mac,
+        "area": dev.get("area") or m.get("last_area") or "",
+        "host": dev.get("host") or m.get("last_host") or "",
+        "port": int(dev.get("port") or m.get("last_port") or 80),
+        "gen": int(dev.get("gen") or m.get("last_gen") or 1),
+        "model": dev.get("model") or m.get("last_model") or "",
         "online": bool(online),
         "reset": bool(reset),
         "has_backup": bool(bk and bk.get("saved_at")),
@@ -654,6 +731,15 @@ def build_device_row(
         "hardened": (not reset_by_input_enabled(cur)) if cur else None,
         "checked_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "error": str(err)[:120] if err else "",
+        "lifecycle": m.get("lifecycle") or "active",
+        "faulty_at": m.get("faulty_at") or "",
+        "faulty_reason": m.get("faulty_reason") or "",
+        "replaced_by": m.get("replaced_by") or "",
+        "replaced_at": m.get("replaced_at") or "",
+        "vendor": m.get("vendor") or "",
+        "invoice_number": m.get("invoice_number") or "",
+        "notes": m.get("notes") or "",
+        **w,
     }
 
 
