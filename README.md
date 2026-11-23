@@ -40,6 +40,12 @@
 
 ## Instalação via HACS (Recomendado)
 
+Clica no botão abaixo para abrir o repositório diretamente no HACS da tua instância Home Assistant:
+
+[![Abrir repositório no HACS do teu Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=pleote-dev&repository=ha-shelly-guard&category=integration)
+
+Ou manualmente:
+
 1. No Home Assistant, abre o **HACS** → menu **⋮** (canto superior direito) → **Repositórios personalizados**.
 2. Adiciona o URL:
    ```text
