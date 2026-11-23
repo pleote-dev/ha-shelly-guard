@@ -7,7 +7,9 @@
 **Shelly Guard** é uma integração nativa para o **Home Assistant** (instalável via **HACS**, **sem Pyscript** nem edição de `configuration.yaml`) que protege todos os teus dispositivos **Shelly (Gen1, Gen2, Gen3 e Gen4)** contra perdas de configuração e *factory resets* acidentais, com **backup automático versionado**, **restauro automático**, **suporte nativo a Range Extender** e **dashboard automático na barra lateral**.
 
 ---
-<img width="100%" alt="image" src="https://github.com/user-attachments/assets/ed0b7c7c-1d2a-4013-9b24-c20e671d26d8" />
+
+![Shelly Guard Dashboard](https://github.com/user-attachments/assets/ed0b7c7c-1d2a-4013-9b24-c20e671d26d8)
+
 ---
 
 ## Funcionalidades

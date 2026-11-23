@@ -1,13 +1,13 @@
 {
   "domain": "shelly_guard",
   "name": "Shelly Guard",
-  "version": "1.1.0",
-  "documentation": "https://github.com/pleote-dev/ha-shelly-guard",
-  "issue_tracker": "https://github.com/pleote-dev/ha-shelly-guard/issues",
+  "after_dependencies": ["shelly"],
   "codeowners": ["@pleote-dev"],
   "config_flow": true,
-  "iot_class": "local_polling",
   "dependencies": ["http", "panel_custom"],
-  "after_dependencies": ["shelly"],
-  "requirements": ["requests>=2.31.0"]
+  "documentation": "https://github.com/pleote-dev/ha-shelly-guard",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/pleote-dev/ha-shelly-guard/issues",
+  "requirements": ["requests>=2.31.0"],
+  "version": "1.1.0"
 }
