@@ -1,8 +1,0 @@
-title: Shelly Guard
-views:
-  - title: Shelly Guard
-    path: shelly-guard
-    icon: mdi:shield-sync
-    type: panel
-    cards:
-      - type: custom:shelly-guard-card

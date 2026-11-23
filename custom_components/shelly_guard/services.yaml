@@ -1,0 +1,81 @@
+check:
+  name: Run full check
+  description: Check all Shelly devices, apply hardening, resolve Range Extender clients, detect factory resets and refresh backups.
+
+check_device:
+  name: Check single device
+  description: Run check, hardening, Range Extender lookup and backup for a single Shelly device.
+  fields:
+    mac:
+      name: MAC address
+      description: Device MAC address (with or without colons).
+      required: true
+      selector:
+        text:
+
+backup_all:
+  name: Backup all devices
+  description: Immediately back up the configuration of every reachable Shelly known to Home Assistant.
+
+restore:
+  name: Restore device from backup
+  description: Restore a Shelly device configuration from its latest backup (or another device's backup).
+  fields:
+    mac:
+      name: MAC address
+      description: Target device MAC address.
+      required: true
+      selector:
+        text:
+    host:
+      name: Host override
+      description: Optional IP or IP:port override (e.g. after a new DHCP lease).
+      required: false
+      selector:
+        text:
+    dry_run:
+      name: Dry run
+      description: If true, only logs the planned restore steps without modifying the device.
+      default: true
+      selector:
+        boolean:
+    backup_mac:
+      name: Source backup MAC
+      description: Optional MAC of another device whose backup should be restored onto this device (replacement hardware).
+      required: false
+      selector:
+        text:
+
+scan:
+  name: Scan for reset APs
+  description: Ask online Gen2+ Shellys to scan Wi-Fi for factory-reset APs of offline devices.
+
+audit:
+  name: Audit duplicate scripts/webhooks
+  description: List (and optionally remove) duplicated scripts and webhooks on Gen2+ devices.
+  fields:
+    fix:
+      name: Fix duplicates
+      description: Remove duplicate scripts and webhooks automatically.
+      default: false
+      selector:
+        boolean:
+
+router_dhcp:
+  name: Sync ASUS router DHCP reservations
+  description: Compare Shelly IPs with ASUS router DHCP static reservations (requires AsusRouter integration). Skips Range Extender clients.
+  fields:
+    apply:
+      name: Apply missing reservations
+      description: Add missing reservations to the router (existing ones are never changed).
+      default: false
+      selector:
+        boolean:
+
+sync_netalertx:
+  name: Sync names to NetAlertX
+  description: Push Home Assistant Shelly names and areas to NetAlertX (requires NetAlertX URL & token in options).
+
+reload:
+  name: Reload Shelly Guard
+  description: Reload the Shelly Guard integration and its configuration.

@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Shelly Guard",
+        "description": "Configura backup automático, proteção contra factory reset, recuperação e dashboard para os teus dispositivos Shelly.",
+        "data": {
+          "backup_dir": "Pasta de backups",
+          "keep_versions": "Versões de backup a manter por dispositivo",
+          "auto_restore": "Restaurar automaticamente dispositivos em modo de fábrica",
+          "harden": "Desativar factory reset por interruptor/input",
+          "check_interval_min": "Intervalo de verificação (minutos)",
+          "notify_service": "Serviço de notificação (ex.: notify.mobile_app_telemovel)",
+          "shelly_user": "Utilizador Shelly por defeito",
+          "shelly_password": "Password Shelly por defeito",
+          "show_sidebar": "Mostrar painel Shelly Guard na barra lateral"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "O Shelly Guard já está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções do Shelly Guard",
+        "data": {
+          "backup_dir": "Pasta de backups",
+          "keep_versions": "Versões de backup a manter por dispositivo",
+          "auto_restore": "Restaurar automaticamente dispositivos em modo de fábrica",
+          "harden": "Desativar factory reset por interruptor/input",
+          "check_interval_min": "Intervalo de verificação (minutos)",
+          "scan_every_min": "Intervalo mínimo entre scans de AP de reset (minutos)",
+          "notify_service": "Serviço de notificação (ex.: notify.mobile_app_telemovel)",
+          "shelly_user": "Utilizador Shelly por defeito",
+          "shelly_password": "Password Shelly por defeito",
+          "wifi_password": "Password Wi-Fi (opcional, para restaurar IP estático em Gen1)",
+          "netalertx_url": "URL do NetAlertX (opcional)",
+          "netalertx_token": "Token API do NetAlertX (opcional)",
+          "show_sidebar": "Mostrar painel Shelly Guard na barra lateral"
+        }
+      }
+    }
+  }
+}

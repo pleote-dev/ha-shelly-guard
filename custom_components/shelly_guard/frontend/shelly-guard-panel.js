@@ -1,8 +1,9 @@
-class ShellyGuardCard extends HTMLElement {
+class ShellyGuardPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
+    this._narrow = false;
     this._config = {};
     this._data = { devices: [], status: {}, updated_at: null };
     this._lastStateTs = null;
@@ -23,30 +24,42 @@ class ShellyGuardCard extends HTMLElement {
     return 12;
   }
 
+  set narrow(val) {
+    this._narrow = Boolean(val);
+    const menuBtn = this.shadowRoot?.getElementById("sg-menu-btn");
+    if (menuBtn) {
+      menuBtn.narrow = this._narrow;
+      menuBtn.style.display = this._narrow ? "inline-flex" : "none";
+    }
+  }
+
   set hass(hass) {
     const first = !this._hass;
     this._hass = hass;
+    const menuBtn = this.shadowRoot?.getElementById("sg-menu-btn");
+    if (menuBtn) menuBtn.hass = hass;
+
     const sg = hass?.states?.["sensor.shelly_guard"];
     const ts = sg?.attributes?.state_ts || sg?.last_updated || null;
     if (first || (ts && ts !== this._lastStateTs)) {
       this._lastStateTs = ts;
-      this._fetchState(ts);
+      this._fetchState();
     } else if (this._rendered) {
       this._renderBody();
     }
   }
 
-  async _fetchState(ts) {
+  async _fetchState() {
+    if (!this._hass) return;
     this._loading = true;
     if (!this._rendered) this._renderShell();
     try {
-      const q = ts ? `?v=${encodeURIComponent(ts)}` : `?v=${Date.now()}`;
-      const resp = await fetch(`/local/shelly_guard_state.json${q}`, { cache: "no-store" });
-      if (resp.ok) {
-        this._data = await resp.json();
+      const data = await this._hass.callApi("GET", "shelly_guard/state");
+      if (data && Array.isArray(data.devices)) {
+        this._data = data;
       }
     } catch (e) {
-      console.warn("shelly-guard-card fetch failed:", e);
+      console.warn("shelly-guard-panel fetch failed:", e);
     } finally {
       this._loading = false;
       this._renderBody();
@@ -98,7 +111,7 @@ class ShellyGuardCard extends HTMLElement {
     try {
       await this._hass.callService(domain, service, data);
       this._showToast(okMsg, "ok");
-      setTimeout(() => this._fetchState(Date.now()), 2500);
+      setTimeout(() => this._fetchState(), 2500);
     } catch (e) {
       this._showToast(`Erro: ${e?.message || e}`, "err");
     } finally {
@@ -138,6 +151,8 @@ class ShellyGuardCard extends HTMLElement {
       <style>
         :host {
           display: block;
+          min-height: 100%;
+          background: var(--primary-background-color, #111);
           font-family: var(--paper-font-body1_-_font-family, Roboto, system-ui, -apple-system, sans-serif);
           color: var(--primary-text-color, #e1e1e1);
           box-sizing: border-box;
@@ -214,18 +229,14 @@ class ShellyGuardCard extends HTMLElement {
           border-color: var(--primary-color, #03a9f4);
           color: #fff;
         }
-        button.btn.primary:hover:not(:disabled) {
-          filter: brightness(1.08);
-        }
+        button.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
         button.btn.upgrade-active {
           background: var(--warning-color, #ff9800);
           border-color: var(--warning-color, #ff9800);
           color: #111;
           font-weight: 600;
         }
-        button.btn.upgrade-active:hover:not(:disabled) {
-          filter: brightness(1.08);
-        }
+        button.btn.upgrade-active:hover:not(:disabled) { filter: brightness(1.08); }
         button.btn.sm {
           padding: 5px 10px;
           font-size: 0.78rem;
@@ -247,7 +258,7 @@ class ShellyGuardCard extends HTMLElement {
           border-radius: 12px;
           padding: 12px 14px;
           cursor: pointer;
-          transition: border-color 0.15s, transform 0.1s;
+          transition: border-color 0.15s;
         }
         .kpi:hover { border-color: var(--primary-color, #03a9f4); }
         .kpi.active { border-color: var(--primary-color, #03a9f4); box-shadow: 0 0 0 1px var(--primary-color, #03a9f4); }
@@ -314,9 +325,7 @@ class ShellyGuardCard extends HTMLElement {
           border-radius: 14px;
           overflow: hidden;
         }
-        .table-scroll {
-          overflow-x: auto;
-        }
+        .table-scroll { overflow-x: auto; }
         table {
           width: 100%;
           border-collapse: collapse;
@@ -439,6 +448,7 @@ class ShellyGuardCard extends HTMLElement {
       <div class="wrap">
         <div class="header">
           <div class="title-block">
+            <ha-menu-button id="sg-menu-btn" style="display:${this._narrow ? "inline-flex" : "none"}"></ha-menu-button>
             <div class="logo"><ha-icon icon="mdi:shield-sync"></ha-icon></div>
             <div>
               <h1 class="title">Shelly Guard</h1>
@@ -446,8 +456,8 @@ class ShellyGuardCard extends HTMLElement {
             </div>
           </div>
           <div class="header-actions">
-            <button class="btn" id="btn-reload" title="Recarregar pyscript">
-              <ha-icon icon="mdi:reload"></ha-icon> Reload Pyscript
+            <button class="btn" id="btn-reload" title="Recarregar integração Shelly Guard">
+              <ha-icon icon="mdi:reload"></ha-icon> Reload
             </button>
             <button class="btn" id="btn-backup" title="Backup de todos os Shellys">
               <ha-icon icon="mdi:content-save-all"></ha-icon> Backup All
@@ -472,14 +482,20 @@ class ShellyGuardCard extends HTMLElement {
       <div class="toast hidden" id="sg-toast"></div>
     `;
 
+    const menuBtn = this.shadowRoot.getElementById("sg-menu-btn");
+    if (menuBtn) {
+      menuBtn.hass = this._hass;
+      menuBtn.narrow = this._narrow;
+    }
+
     this.shadowRoot.getElementById("btn-reload").addEventListener("click", () =>
-      this._call("reload", "pyscript", "reload", {}, "Pyscript recarregado")
+      this._call("reload", "shelly_guard", "reload", {}, "Shelly Guard recarregado")
     );
     this.shadowRoot.getElementById("btn-backup").addEventListener("click", () =>
-      this._call("backup", "pyscript", "shelly_guard_backup_all", {}, "Backup completo iniciado")
+      this._call("backup", "shelly_guard", "backup_all", {}, "Backup completo iniciado")
     );
     this.shadowRoot.getElementById("btn-check").addEventListener("click", () =>
-      this._call("check", "pyscript", "shelly_guard_check", {}, "Check completo iniciado")
+      this._call("check", "shelly_guard", "check", {}, "Check completo iniciado")
     );
     this.shadowRoot.getElementById("sg-search").addEventListener("input", (e) => {
       this._search = (e.target.value || "").trim().toLowerCase();
@@ -502,7 +518,6 @@ class ShellyGuardCard extends HTMLElement {
       sub.textContent = parts.length ? parts.join(" · ") : "Sem verificação registada ainda";
     }
 
-    // Header button busy states
     const btnReload = this.shadowRoot.getElementById("btn-reload");
     const btnBackup = this.shadowRoot.getElementById("btn-backup");
     const btnCheck = this.shadowRoot.getElementById("btn-check");
@@ -568,7 +583,7 @@ class ShellyGuardCard extends HTMLElement {
       });
     }
 
-    let filtered = devs.filter((d) => {
+    const filtered = devs.filter((d) => {
       if (this._filter === "online" && !d.online) return false;
       if (this._filter === "offline" && d.online) return false;
       if (this._filter === "upgrade" && !d.hasUpgrade) return false;
@@ -692,12 +707,17 @@ class ShellyGuardCard extends HTMLElement {
       btn.addEventListener("click", () => {
         const mac = btn.dataset.mac;
         const name = btn.dataset.name;
-        this._call(`chk_${mac}`, "pyscript", "shelly_guard_check_device", { mac }, `Check executado em ${name}`);
+        this._call(`chk_${mac}`, "shelly_guard", "check_device", { mac }, `Check executado em ${name}`);
       });
     });
   }
 }
 
+class ShellyGuardCard extends ShellyGuardPanel {}
+
+if (!customElements.get("shelly-guard-panel")) {
+  customElements.define("shelly-guard-panel", ShellyGuardPanel);
+}
 if (!customElements.get("shelly-guard-card")) {
   customElements.define("shelly-guard-card", ShellyGuardCard);
 }

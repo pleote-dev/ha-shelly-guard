@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Shelly Guard",
+        "description": "Configure automatic backup, hardening, recovery and dashboard for your Shelly devices.",
+        "data": {
+          "backup_dir": "Backup directory",
+          "keep_versions": "Backup versions to keep per device",
+          "auto_restore": "Auto-restore factory-reset devices",
+          "harden": "Disable factory reset from switch/input (harden)",
+          "check_interval_min": "Check interval (minutes)",
+          "notify_service": "Notification service (e.g. notify.mobile_app_phone)",
+          "shelly_user": "Fallback Shelly username",
+          "shelly_password": "Fallback Shelly password",
+          "show_sidebar": "Show Shelly Guard panel in sidebar"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Shelly Guard is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Shelly Guard Options",
+        "data": {
+          "backup_dir": "Backup directory",
+          "keep_versions": "Backup versions to keep per device",
+          "auto_restore": "Auto-restore factory-reset devices",
+          "harden": "Disable factory reset from switch/input (harden)",
+          "check_interval_min": "Check interval (minutes)",
+          "scan_every_min": "Reset-AP scan cooldown (minutes)",
+          "notify_service": "Notification service (e.g. notify.mobile_app_phone)",
+          "shelly_user": "Fallback Shelly username",
+          "shelly_password": "Fallback Shelly password",
+          "wifi_password": "Wi-Fi password (optional, for Gen1 static IP restore)",
+          "netalertx_url": "NetAlertX URL (optional)",
+          "netalertx_token": "NetAlertX API token (optional)",
+          "show_sidebar": "Show Shelly Guard panel in sidebar"
+        }
+      }
+    }
+  }
+}
