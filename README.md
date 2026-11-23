@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/icon.png" alt="Shelly Guard" width="128" />
+</p>
+
 # Shelly Guard — Integração Nativa Home Assistant (HACS)
 
 **Shelly Guard** é uma integração nativa para o **Home Assistant** (instalável via **HACS**, **sem Pyscript** nem edição de `configuration.yaml`) que protege todos os teus dispositivos **Shelly (Gen1, Gen2, Gen3 e Gen4)** contra perdas de configuração e *factory resets* acidentais, com **backup automático versionado**, **restauro automático**, **suporte nativo a Range Extender** e **dashboard automático na barra lateral**.

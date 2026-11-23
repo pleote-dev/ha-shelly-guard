@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0288D1"/>
+      <stop offset="100%" stop-color="#03A9F4"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#E1F5FE"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bg)"/>
+  <!-- Shield outline -->
+  <path d="M256 84 L396 140 V252 C396 342 336 412 256 440 C176 412 116 342 116 252 V140 Z" fill="url(#shield)"/>
+  <!-- Inner shield cutout -->
+  <path d="M256 118 L364 162 V250 C364 320 318 377 256 402 C194 377 148 320 148 250 V162 Z" fill="url(#bg)"/>
+  <!-- Sync arrows -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M204 238 A56 56 0 0 1 302 222"/>
+    <path d="M308 278 A56 56 0 0 1 210 294"/>
+  </g>
+  <!-- Arrowheads -->
+  <polygon points="312,190 318,236 276,226" fill="#FFFFFF"/>
+  <polygon points="200,326 194,280 236,290" fill="#FFFFFF"/>
+</svg>
