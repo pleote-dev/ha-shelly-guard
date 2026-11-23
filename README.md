@@ -2,9 +2,13 @@
   <img src="images/icon.png" alt="Shelly Guard" width="128" />
 </p>
 
-# Shelly Guard — Integração Nativa Home Assistant (HACS)
+<p align="center">
+  <strong>🇬🇧 English</strong> · <a href="README.pt.md">🇵🇹 Português</a>
+</p>
 
-**Shelly Guard** é uma integração nativa para o **Home Assistant** (instalável via **HACS**, **sem Pyscript** nem edição de `configuration.yaml`) que protege todos os teus dispositivos **Shelly (Gen1, Gen2, Gen3 e Gen4)** contra perdas de configuração e *factory resets* acidentais, com **backup automático versionado**, **restauro automático**, **suporte nativo a Range Extender** e **dashboard automático na barra lateral**.
+# Shelly Guard — Custom Integration for Home Assistant (HACS)
+
+**Shelly Guard** is a custom integration for **Home Assistant** (installable via **HACS** and configured 100% through the UI) that protects your **Shelly (Gen1, Gen2, Gen3, and Gen4)** devices against accidental factory resets and hardware failures, providing **versioned automatic backups**, **auto-restore**, **Range Extender support**, **warranty tracking**, and a **dedicated sidebar dashboard**.
 
 ---
 
@@ -12,87 +16,84 @@
 
 ---
 
-## Funcionalidades
-
-* **Instalação HACS sem dependências:** integração nativa (`custom_components/shelly_guard`) com configuração 100% pela interface gráfica (Config Flow & Options Flow) — não precisa de Pyscript.
-* **Backup automático versionado** de todos os Shellys integrados no Home Assistant (configuração completa, nomes, perfis, relés/estores, ações, scripts, schedules, webhooks e KVS).
-* **Hardening automático:** desativa *factory reset from switch/input* (evita resets acidentais ao carregar 5× no interruptor) e garante que cada dispositivo tem nome configurado.
-* **Deteção e Auto-Restore:** deteta dispositivos que voltaram em modo de fábrica e restaura automaticamente a configuração a partir do último backup (incluindo IP estático e autenticação).
-* **Deteção de AP de reset via vizinhos:** se um Shelly ficar offline, pede aos Shellys Gen2+ vizinhos um `WiFi.Scan` e notifica qual o SSID de recuperação (`Shelly...`) e perto de que dispositivo está.
-* **Suporte completo a Range Extender (Gen2+/Pro):**
-  * Respeita `host:port` (porta NAT `mport`) em todas as operações;
-  * Consulta `WiFi.ListAPClients` nos Shellys com Range Extender ativo antes de disparar falsos alertas de reset;
-  * Atualiza automaticamente o `host` e `port` da integração Shelly no Home Assistant quando um dispositivo está ligado atrás de um Range Extender.
-* **Dashboard automático na barra lateral (`Shelly Guard`):**
-  * Servido diretamente pela integração via API autenticada (`/api/shelly_guard/state`) — sem copiar ficheiros para `www/` nem adicionar recursos Lovelace;
-  * Atalhos no header para **Reload**, **Backup All** e **Check Completo**;
-  * KPIs e filtros rápidos (`Todos`, `Offline`, `Com Upgrade`, `Range Extender`, `Sem Backup`) + pesquisa em tempo real;
-  * Tabela com estado online/offline, link direto `http://host:port`, estado e data de backup, tipo de configuração (`Gen · Wi-Fi/Ethernet/Range Extender · Estático/DHCP`), proteção *hardened* e firmware atual;
-  * **Botão Upgrade** por dispositivo (fica ativo apenas quando existe firmware novo disponível e instala via `update.install`);
-  * **Botão Check** por dispositivo (`shelly_guard.check_device`).
-* **Lista de Avariados & Assistente de Substituição (v1.1.0):**
-  * Marca manualmente qualquer dispositivo como **Avariado** (preservando o último backup e os dados de fatura/garantia mesmo que seja removido do HA);
-  * Quando entra um **Shelly novo** na rede (detetado em tempo real), o dashboard abre uma janela para escolher se é um **dispositivo novo** ou se vem **substituir um dispositivo avariado/offline**, restaurando automaticamente todo o backup no equipamento novo e arquivando o antigo como *Substituído*.
-* **Registo de Compra & Garantia (v1.1.0):**
-  * Guarda por dispositivo: **data de compra**, **duração da garantia** (36 meses por defeito), **vendedor/loja**, **nº de fatura** e notas (em `/share/shelly_guard/metadata.json`);
-  * Mostra na tabela a validade da garantia (*Em garantia*, *Expira em breve*, *Expirada*) e destaca loja + nº de fatura nos dispositivos avariados para pedir RMA rapidamente.
-* **Extras opcionais:** sincronização de nomes/áreas com **NetAlertX**, auditoria de scripts/webhooks duplicados e gestão de reservas DHCP em routers **ASUS** (via integração `AsusRouter`).
+> **Disclaimer:** Shelly Guard is an independent community project. It is **not** affiliated with, endorsed by, or officially connected to **Shelly** / **Shelly Group** (Allterco Robotics) or **Home Assistant**.
 
 ---
 
-## Instalação via HACS (Recomendado)
+## Features
 
-Clica no botão abaixo para abrir o repositório diretamente no HACS da tua instância Home Assistant:
-
-[![Abrir repositório no HACS do teu Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=pleote-dev&repository=ha-shelly-guard&category=integration)
-
-Ou manualmente:
-
-1. No Home Assistant, abre o **HACS** → menu **⋮** (canto superior direito) → **Repositórios personalizados**.
-2. Adiciona o URL:
-   ```text
-   https://github.com/pleote-dev/ha-shelly-guard
-   ```
-   com categoria **Integração** → **Adicionar**.
-3. Procura **Shelly Guard** no HACS → **Transferir** → **Reiniciar o Home Assistant**.
-4. Vai a **Definições → Dispositivos e Serviços → Adicionar integração** → procura **Shelly Guard**.
-5. Escolhe as opções (pasta de backups, `auto_restore`, `harden`, serviço de notificação opcional) e clica em **Submeter**.
-
-Pronto! O painel **Shelly Guard** aparece automaticamente na barra lateral e a entidade `sensor.shelly_guard` fica ativa.
-
-### Instalação manual (sem HACS)
-Copia a pasta `custom_components/shelly_guard` para `/config/custom_components/shelly_guard`, reinicia o Home Assistant e adiciona a integração em **Definições → Dispositivos e Serviços**.
+* **100% UI-Configured (HACS):** Install via HACS and configure directly under *Settings → Devices & Services* (Config Flow & Options Flow, with English and Portuguese translations).
+* **Versioned Automatic Backups:** Backs up every Shelly device known to Home Assistant (full config, names, profiles, relays/covers, actions, scripts, schedules, webhooks, and KVS), keeping a new snapshot only when the configuration changes.
+* **Automatic Hardening:** Disables *factory reset from switch/input* (preventing accidental resets from toggling a wall switch 5×) and ensures every device has a configured name.
+* **Factory-Reset Detection & Auto-Restore:** Detects devices that return in factory-default state and automatically restores their full configuration from the latest backup (including static IP and authentication).
+* **Neighbor AP Scan for Reset Devices:** If a Shelly goes offline, asks nearby online Gen2+ Shellys to run `WiFi.Scan` and notifies you of its recovery SSID (`Shelly...`) and nearest neighbor.
+* **Full Range Extender Support (Gen2+/Pro):**
+  * Uses `host:port` (NAT `mport`) across all operations;
+  * Queries `WiFi.ListAPClients` on Range Extender hosts before raising false factory-reset alerts;
+  * Automatically updates the Home Assistant Shelly integration's `host` and `port` when a device connects through a Range Extender.
+* **Faulty List & Replacement Wizard:**
+  * Manually mark any device as **Faulty** (preserving its latest backup and invoice/warranty details even if removed from HA);
+  * When a **new Shelly** joins Home Assistant, a modal lets you choose whether it is a **brand-new device** or a **replacement for a faulty/offline device**, automatically restoring the old device's backup onto the new hardware and archiving the old unit as *Replaced*.
+* **Purchase & Warranty Tracking:**
+  * Stores **purchase date**, **warranty duration** (default 36 months), **vendor/store**, **invoice number**, and notes per device (in `/share/shelly_guard/metadata.json`);
+  * Displays warranty status badges (*Valid*, *Expiring soon*, *Expired*) and highlights store + invoice on faulty units for quick RMA claims.
+* **Dedicated Sidebar Dashboard (`Shelly Guard`):**
+  * Automatically served by the integration via an authenticated API (`/api/shelly_guard/state`) with automatic **English / Portuguese** UI localization following your Home Assistant user language;
+  * Header shortcuts for **Reload**, **Backup All**, and **Full Check**;
+  * Clickable KPIs, quick filters, live search, direct `http://host:port` links, firmware version & active **Upgrade** button (enabled only when an update is available), and per-device **Check** button.
+* **Optional Integrations:** Sync names/areas to **NetAlertX** (configured in Options), audit duplicate scripts/webhooks, and manage **ASUS Router** DHCP static reservations (when `AsusRouter` is installed).
 
 ---
 
-## Serviços disponíveis
+## Installation via HACS (Recommended)
 
-| Serviço | Descrição |
+Click the button below to open this repository directly in HACS on your Home Assistant instance:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=pleote-dev&repository=ha-shelly-guard&category=integration)
+
+Or manually:
+
+1. In Home Assistant, open **HACS** → **⋮** (top-right) → **Custom repositories**.
+2. Add `https://github.com/pleote-dev/ha-shelly-guard` with category **Integration** → **Add**.
+3. Search for **Shelly Guard** → **Download** → **Restart Home Assistant**.
+4. Go to **Settings → Devices & Services → Add Integration** → search for **Shelly Guard**.
+5. Review the options (backup directory, check interval, `auto_restore`, `harden`, optional notification service) and click **Submit**.
+
+The **Shelly Guard** panel will appear automatically in your sidebar and `sensor.shelly_guard` will become active.
+
+### Manual Installation (without HACS)
+Copy `custom_components/shelly_guard` into `/config/custom_components/shelly_guard`, restart Home Assistant, and add **Shelly Guard** under **Settings → Devices & Services**.
+
+---
+
+## Available Services
+
+| Service | Description |
 | --- | --- |
-| `shelly_guard.check` | Verifica todos os Shellys, aplica *hardening*, resolve Range Extender / resets e atualiza backups. |
-| `shelly_guard.check_device` | Executa o check e backup de um único dispositivo (`mac: "AABBCCDDEEFF"`). |
-| `shelly_guard.backup_all` | Faz backup imediato de todos os dispositivos Shelly. |
-| `shelly_guard.restore` | Restaura um dispositivo a partir do backup (`mac`, `host` opcional, `dry_run: true\|false`, `backup_mac` para clonar em equipamento de substituição). |
-| `shelly_guard.scan` | Pede aos Shellys Gen2+ online um `WiFi.Scan` à procura de APs de reset. |
-| `shelly_guard.audit` | Lista (e com `fix: true` remove) scripts e webhooks duplicados em Gen2+. |
-| `shelly_guard.router_dhcp` | Compara/adiciona reservas DHCP num router ASUS (ignora clientes em Range Extender). |
-| `shelly_guard.sync_netalertx` | Envia nomes e áreas do HA para o NetAlertX (se configurado nas opções). |
-| `shelly_guard.reload` | Recarrega a integração Shelly Guard. |
-| `shelly_guard.set_metadata` | Guarda data de compra, garantia, vendedor, nº de fatura e notas de um dispositivo. |
-| `shelly_guard.set_lifecycle` | Marca um dispositivo como `active`, `faulty` (avariado) ou `replaced` (substituído). |
-| `shelly_guard.confirm_new_device` | Confirma um Shelly recém-detetado como dispositivo novo. |
-| `shelly_guard.replace_device` | Restaura o backup de `old_mac` para `new_mac` e arquiva o dispositivo antigo como substituído. |
+| `shelly_guard.check` | Checks all Shellys, applies hardening, resolves Range Extender clients / resets, and updates backups. |
+| `shelly_guard.check_device` | Runs check and backup for a single device (`mac: "AABBCCDDEEFF"`). |
+| `shelly_guard.backup_all` | Immediately backs up all reachable Shelly devices. |
+| `shelly_guard.restore` | Restores a device from backup (`mac`, optional `host`, `dry_run: true\|false`, optional `backup_mac` for hardware replacement). |
+| `shelly_guard.scan` | Asks online Gen2+ Shellys to scan Wi-Fi for factory-reset APs. |
+| `shelly_guard.audit` | Lists (and with `fix: true` removes) duplicate scripts and webhooks on Gen2+. |
+| `shelly_guard.router_dhcp` | Compares/adds static DHCP reservations on an ASUS router (skips Range Extender clients). |
+| `shelly_guard.sync_netalertx` | Pushes HA device names and areas to NetAlertX (when configured in Options). |
+| `shelly_guard.set_metadata` | Saves purchase date, warranty months, vendor, invoice number, and notes for a device. |
+| `shelly_guard.set_lifecycle` | Marks a device as `active`, `faulty`, or `replaced`. |
+| `shelly_guard.confirm_new_device` | Confirms a newly detected Shelly as a brand-new device. |
+| `shelly_guard.replace_device` | Restores backup from `old_mac` onto `new_mac` and archives the old device as replaced. |
+| `shelly_guard.reload` | Reloads the Shelly Guard integration. |
 
 ---
 
-## Notas sobre Range Extender
+## Range Extender Notes
 
-* Nos Shelly Gen2/Pro, o **Range Extender** usa NAT (`192.168.33.0/24`) e expõe cada cliente numa porta dedicada do Shelly host (`http://<IP_HOST>:<mport>`).
-* Para manter a porta `mport` estável após reinícios, recomenda-se definir um **IP estático** na sub-rede `192.168.33.x` no Shelly cliente e desativar o seu AP próprio.
-* Se um Shelly mudar de ligação direta para Range Extender (ou mudar de `mport`), o `shelly_guard` deteta-o automaticamente via `WiFi.ListAPClients` e atualiza a entrada do Home Assistant.
+* On Gen2/Pro Shellys, **Range Extender** uses NAT (`192.168.33.0/24`) and exposes each client on a dedicated port of the host Shelly (`http://<HOST_IP>:<mport>`).
+* To keep `mport` stable across reboots, set a **static IP** in `192.168.33.x` on the client Shelly and disable its own AP.
+* If a Shelly switches to a Range Extender (or its `mport` changes), Shelly Guard automatically discovers it via `WiFi.ListAPClients` and updates the Home Assistant config entry.
 
 ---
 
-## Licença
+## License
 
-MIT — ver [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

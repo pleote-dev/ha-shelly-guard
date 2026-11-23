@@ -673,14 +673,14 @@ def classify_config(
             st = (src.get("config") or {}).get("settings") or {}
             m = (st.get("wifi_sta") or {}).get("ipv4_method")
             if m:
-                parts.append("Estático" if m == "static" else "DHCP")
+                parts.append("Static" if m == "static" else "DHCP")
         else:
             c = (src.get("config") or {}).get("config") or {}
             eth = c.get("eth") or {}
             sta = (c.get("wifi") or {}).get("sta") or {}
             m = eth.get("ipv4mode") if eth.get("enable") else sta.get("ipv4mode")
             if m:
-                parts.append("Estático" if m == "static" else "DHCP")
+                parts.append("Static" if m == "static" else "DHCP")
     return " · ".join(parts)
 
 

@@ -1,7 +1,7 @@
 """Constants for the Shelly Guard integration."""
 
 DOMAIN = "shelly_guard"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 CONF_BACKUP_DIR = "backup_dir"
 CONF_KEEP_VERSIONS = "keep_versions"
