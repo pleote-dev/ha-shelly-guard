@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+shelly_guard_state.json
+router_snapshot.json
+secrets.yaml
+backups/
+*.log

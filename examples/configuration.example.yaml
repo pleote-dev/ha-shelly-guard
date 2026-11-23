@@ -1,0 +1,33 @@
+# Adicionar (ou fundir) no teu /config/configuration.yaml
+
+pyscript:
+  allow_all_imports: true
+  hass_is_global: true
+  apps:
+    shelly_guard:
+      backup_dir: /share/shelly_guard
+      state_file: /config/www/shelly_guard_state.json
+      keep_versions: 15
+      auto_restore: true
+      harden: true
+      # Opcional: notificações no telemóvel
+      notify_service: notify.mobile_app_your_phone
+      notify_data:
+        push:
+          thread-id: shelly-guard
+      # Opcional: password global caso os Shellys usem autenticação diferente da guardada no HA
+      # shelly_user: admin
+      # shelly_password: !secret shelly_password
+      # Opcional: sincronização de nomes/áreas com NetAlertX
+      # netalertx_url: http://192.168.1.10:20212
+      # netalertx_token: !secret netalertx_api_token
+
+lovelace:
+  mode: storage
+  dashboards:
+    shelly-guard:
+      mode: yaml
+      title: Shelly Guard
+      icon: mdi:shield-sync
+      show_in_sidebar: true
+      filename: lovelace/shelly_guard.yaml
