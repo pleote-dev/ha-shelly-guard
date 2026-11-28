@@ -8,6 +8,6 @@
   "documentation": "https://github.com/pleote-dev/ha-shelly-guard",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/pleote-dev/ha-shelly-guard/issues",
-  "requirements": ["requests>=2.31.0"],
+  "requirements": [],
   "version": "1.2.0"
 }
