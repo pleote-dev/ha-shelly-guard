@@ -16,6 +16,8 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.event import async_track_time_change, async_track_time_interval
 
 from .const import (
+    API_ACTION_PATH,
+    API_BACKUPS_PATH,
     API_STATE_PATH,
     CONF_CHECK_INTERVAL_MIN,
     CONF_NETALERTX_TOKEN,
@@ -30,8 +32,30 @@ from .const import (
 )
 from .manager import ShellyGuardManager
 
+try:
+    from homeassistant.core import SupportsResponse
+except ImportError:  # pragma: no cover
+    SupportsResponse = None  # type: ignore[assignment]
+
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR]
+
+SERVICE_NAMES = (
+    "check",
+    "check_device",
+    "backup_all",
+    "backup_device",
+    "restore",
+    "scan",
+    "audit",
+    "router_dhcp",
+    "sync_netalertx",
+    "reload",
+    "set_metadata",
+    "set_lifecycle",
+    "confirm_new_device",
+    "replace_device",
+)
 
 
 class ShellyGuardStateView(HomeAssistantView):
@@ -50,6 +74,84 @@ class ShellyGuardStateView(HomeAssistantView):
         return self.json(manager.get_state_payload())
 
 
+class ShellyGuardBackupsView(HomeAssistantView):
+    """Authenticated HTTP endpoint returning backup snapshots for a single device."""
+
+    url = API_BACKUPS_PATH
+    name = "api:shelly_guard:backups"
+    requires_auth = True
+
+    async def get(self, request: web.Request, mac: str) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        data = hass.data.get(DOMAIN) or {}
+        manager: ShellyGuardManager | None = data.get("manager")
+        if not manager:
+            return self.json({"ok": False, "error": "manager_not_ready", "backups": []}, status_code=503)
+        res = await manager.async_get_device_backups(mac)
+        return self.json(res)
+
+
+class ShellyGuardActionView(HomeAssistantView):
+    """Authenticated HTTP endpoint returning synchronous results for UI device actions."""
+
+    url = API_ACTION_PATH
+    name = "api:shelly_guard:action"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        data = hass.data.get(DOMAIN) or {}
+        manager: ShellyGuardManager | None = data.get("manager")
+        if not manager:
+            return self.json({"ok": False, "error": "manager_not_ready"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            return self.json({"ok": False, "error": "invalid_json"}, status_code=400)
+
+        act = str(body.get("action") or "").strip()
+        if act == "backup_device":
+            res = await manager.async_backup_device(
+                mac=str(body.get("mac") or ""),
+                force=bool(body.get("force", False)),
+            )
+            return self.json(res)
+        if act == "check_device":
+            res = await manager.async_check_device(str(body.get("mac") or ""))
+            return self.json(res)
+        if act == "restore":
+            res = await manager.async_restore(
+                mac=str(body.get("mac") or ""),
+                host=body.get("host") or None,
+                dry_run=bool(body.get("dry_run", True)),
+                backup_mac=body.get("backup_mac") or None,
+                version=body.get("version") or None,
+            )
+            return self.json(res)
+        if act == "confirm_new_device":
+            res = await manager.async_confirm_new_device(
+                mac=str(body.get("mac") or ""),
+                purchase_date=body.get("purchase_date"),
+                warranty_months=body.get("warranty_months"),
+                vendor=body.get("vendor"),
+                invoice_number=body.get("invoice_number"),
+                notes=body.get("notes"),
+            )
+            return self.json(res)
+        if act == "replace_device":
+            res = await manager.async_replace_device(
+                old_mac=str(body.get("old_mac") or ""),
+                new_mac=str(body.get("new_mac") or ""),
+                purchase_date=body.get("purchase_date"),
+                warranty_months=body.get("warranty_months"),
+                vendor=body.get("vendor"),
+                invoice_number=body.get("invoice_number"),
+                notes=body.get("notes"),
+            )
+            return self.json(res)
+        return self.json({"ok": False, "error": f"unknown action '{act}'"}, status_code=400)
+
+
 async def _async_register_frontend(hass: HomeAssistant, show_sidebar: bool) -> None:
     """Serve frontend JS and register the Shelly Guard sidebar panel."""
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -66,6 +168,11 @@ async def _async_register_frontend(hass: HomeAssistant, show_sidebar: bool) -> N
             hass.http.register_static_path(STATIC_URL_PATH, frontend_dir, cache_headers=False)
         hass.http.register_view(ShellyGuardStateView())
         domain_data["static_registered"] = True
+
+    if not domain_data.get("action_views_registered"):
+        hass.http.register_view(ShellyGuardBackupsView())
+        hass.http.register_view(ShellyGuardActionView())
+        domain_data["action_views_registered"] = True
 
     if show_sidebar and not domain_data.get("panel_registered"):
         try:
@@ -110,19 +217,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _svc_check(call: ServiceCall) -> None:
         hass.async_create_task(manager.async_check_all())
 
-    async def _svc_check_device(call: ServiceCall) -> None:
-        mac = call.data.get("mac", "")
-        hass.async_create_task(manager.async_check_device(mac))
+    async def _svc_check_device(call: ServiceCall) -> dict[str, Any]:
+        return await manager.async_check_device(call.data.get("mac", ""))
 
     async def _svc_backup_all(call: ServiceCall) -> None:
         hass.async_create_task(manager.async_backup_all())
 
-    async def _svc_restore(call: ServiceCall) -> None:
-        await manager.async_restore(
+    async def _svc_backup_device(call: ServiceCall) -> dict[str, Any]:
+        return await manager.async_backup_device(
+            mac=call.data.get("mac", ""),
+            force=bool(call.data.get("force", False)),
+        )
+
+    async def _svc_restore(call: ServiceCall) -> dict[str, Any]:
+        return await manager.async_restore(
             mac=call.data.get("mac", ""),
             host=call.data.get("host"),
             dry_run=bool(call.data.get("dry_run", True)),
             backup_mac=call.data.get("backup_mac"),
+            version=call.data.get("version"),
         )
 
     async def _svc_scan(call: ServiceCall) -> None:
@@ -158,13 +271,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     async def _svc_confirm_new(call: ServiceCall) -> None:
-        hass.async_create_task(manager.async_confirm_new_device(call.data.get("mac", "")))
+        hass.async_create_task(
+            manager.async_confirm_new_device(
+                mac=call.data.get("mac", ""),
+                purchase_date=call.data.get("purchase_date"),
+                warranty_months=call.data.get("warranty_months"),
+                vendor=call.data.get("vendor"),
+                invoice_number=call.data.get("invoice_number"),
+                notes=call.data.get("notes"),
+            )
+        )
 
     async def _svc_replace(call: ServiceCall) -> None:
         hass.async_create_task(
             manager.async_replace_device(
                 old_mac=call.data.get("old_mac", ""),
                 new_mac=call.data.get("new_mac", ""),
+                purchase_date=call.data.get("purchase_date"),
+                warranty_months=call.data.get("warranty_months"),
+                vendor=call.data.get("vendor"),
+                invoice_number=call.data.get("invoice_number"),
+                notes=call.data.get("notes"),
             )
         )
 
@@ -172,6 +299,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "check": _svc_check,
         "check_device": _svc_check_device,
         "backup_all": _svc_backup_all,
+        "backup_device": _svc_backup_device,
         "restore": _svc_restore,
         "scan": _svc_scan,
         "audit": _svc_audit,
@@ -183,8 +311,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "confirm_new_device": _svc_confirm_new,
         "replace_device": _svc_replace,
     }
+    response_services = {"check_device", "backup_device", "restore"}
     for name, handler in services.items():
-        hass.services.async_register(DOMAIN, name, handler)
+        if SupportsResponse is not None and name in response_services:
+            hass.services.async_register(
+                DOMAIN, name, handler, supports_response=SupportsResponse.OPTIONAL
+            )
+        else:
+            hass.services.async_register(DOMAIN, name, handler)
 
     # Detect newly added Shelly devices immediately
     async def _on_device_reg_updated(event: Any) -> None:
@@ -252,11 +386,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 frontend.async_remove_panel(hass, PANEL_URL_PATH)
             except Exception:
                 pass
-        for svc in (
-            "check", "check_device", "backup_all", "restore",
-            "scan", "audit", "router_dhcp", "sync_netalertx", "reload",
-            "set_metadata", "set_lifecycle", "confirm_new_device", "replace_device",
-        ):
+        for svc in SERVICE_NAMES:
             if hass.services.has_service(DOMAIN, svc):
                 hass.services.async_remove(DOMAIN, svc)
     return unload_ok

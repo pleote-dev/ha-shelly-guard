@@ -72,6 +72,7 @@ class ShellyGuardManager:
             "errors": [],
             "hardened": [],
             "last_backup": None,
+            "last_device_backup": None,
             "last_check": None,
             "last_device_check": None,
             "state_ts": None,
@@ -101,6 +102,26 @@ class ShellyGuardManager:
         m.setdefault("lifecycle", "active")
         return m
 
+    @staticmethod
+    def _apply_meta_fields(
+        meta: dict[str, Any],
+        purchase_date: str | None = None,
+        warranty_months: int | None = None,
+        vendor: str | None = None,
+        invoice_number: str | None = None,
+        notes: str | None = None,
+    ) -> None:
+        if purchase_date is not None:
+            meta["purchase_date"] = str(purchase_date).strip()
+        if warranty_months is not None and str(warranty_months).strip() != "":
+            meta["warranty_months"] = int(warranty_months)
+        if vendor is not None:
+            meta["vendor"] = str(vendor).strip()
+        if invoice_number is not None:
+            meta["invoice_number"] = str(invoice_number).strip()
+        if notes is not None:
+            meta["notes"] = str(notes).strip()
+
     async def async_init(self) -> None:
         pref = self._cfg(CONF_BACKUP_DIR, DEFAULT_BACKUP_DIR)
         self.backup_dir = await self.hass.async_add_executor_job(core.resolve_dir, pref, DEFAULT_BACKUP_DIR)
@@ -115,17 +136,19 @@ class ShellyGuardManager:
         meta_changed = False
         for mac, dev in inv.items():
             m = self._touch_meta_snapshot(mac, dev)
-            if first_seed and not m.get("known"):
+            backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
+            bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
+            if not m.get("known") and not m.get("pending_new") and (first_seed or backup is not None):
                 m["known"] = True
                 meta_changed = True
-            backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
             self.device_table[mac] = core.build_device_row(
-                mac, dev, cur=None, backup=backup, online=True, meta=m
+                mac, dev, cur=None, backup=backup, online=True, meta=m, backup_count=bcount
             )
         # Keep faulty / replaced devices visible even if removed from HA Shelly integration
         for mac, m in self.metadata.items():
             if mac not in self.device_table and m.get("lifecycle") in ("faulty", "replaced"):
                 backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
+                bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
                 stub = {
                     "mac": mac,
                     "name": m.get("last_name") or (backup or {}).get("name") or mac,
@@ -136,7 +159,7 @@ class ShellyGuardManager:
                     "model": m.get("last_model") or (backup or {}).get("model") or "",
                 }
                 self.device_table[mac] = core.build_device_row(
-                    mac, stub, cur=None, backup=backup, online=False, meta=m
+                    mac, stub, cur=None, backup=backup, online=False, meta=m, backup_count=bcount
                 )
         if meta_changed:
             await self._save_metadata()
@@ -146,39 +169,59 @@ class ShellyGuardManager:
     async def async_detect_new_devices(
         self, inv: dict[str, dict[str, Any]] | None = None, notify: bool = True
     ) -> None:
-        """Detect newly added Shelly MACs when faulty or offline devices exist."""
+        """Detect newly added Shelly MACs for warranty registration and optional faulty replacement."""
         inv = inv if inv is not None else self.shelly_inventory()
         candidates_exist = any(
             (r.get("lifecycle") == "faulty") or (not r.get("online") and r.get("lifecycle") == "active")
             for r in self.device_table.values()
         )
         meta_changed = False
+        now_iso = datetime.datetime.now().isoformat(timespec="seconds")
         for mac, dev in inv.items():
             m = self._touch_meta_snapshot(mac, dev)
-            if m.get("known"):
+            if m.get("known") and not m.get("pending_new"):
                 self.pending_new_devices.pop(mac, None)
                 continue
-            if not candidates_exist:
-                m["known"] = True
+
+            already_notified = bool(m.get("pending_notified"))
+            if not m.get("pending_new"):
+                m["pending_new"] = True
+                m["known"] = False
+                m["detected_at"] = m.get("detected_at") or now_iso
                 meta_changed = True
-                continue
-            if mac not in self.pending_new_devices:
-                self.pending_new_devices[mac] = {
-                    "mac": mac,
-                    "name": dev["name"],
-                    "area": dev.get("area") or "",
-                    "model": dev.get("model") or "",
-                    "host": dev["host"],
-                    "port": int(dev.get("port") or 80),
-                    "gen": int(dev.get("gen") or 1),
-                    "detected_at": datetime.datetime.now().isoformat(timespec="seconds"),
-                }
-                if notify:
-                    await self._notify(
-                        "Novo Shelly detetado",
-                        f"{dev['name']} ({dev.get('model') or 'Shelly'}) entrou na rede. "
-                        "Abre o painel Shelly Guard para confirmar se é novo ou se substitui um dispositivo avariado.",
-                    )
+
+            if mac not in self.device_table:
+                backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
+                bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
+                self.device_table[mac] = core.build_device_row(
+                    mac, dev, cur=None, backup=backup, online=True, meta=m, backup_count=bcount
+                )
+
+            self.pending_new_devices[mac] = {
+                "mac": mac,
+                "name": dev["name"],
+                "area": dev.get("area") or "",
+                "model": dev.get("model") or "",
+                "host": dev["host"],
+                "port": int(dev.get("port") or 80),
+                "gen": int(dev.get("gen") or 1),
+                "detected_at": m.get("detected_at") or now_iso,
+            }
+
+            if notify and not already_notified:
+                m["pending_notified"] = True
+                meta_changed = True
+                extra = (
+                    "confirma se substitui um dispositivo avariado ou regista os dados de garantia."
+                    if candidates_exist
+                    else "regista os dados de compra/garantia e o backup inicial."
+                )
+                await self._notify(
+                    "Novo Shelly detetado",
+                    f"{dev['name']} ({dev.get('model') or 'Shelly'}) entrou na rede. "
+                    f"Abre o painel Shelly Guard e {extra}",
+                )
+
         # Drop pending entries that disappeared from HA
         for stale in [m for m in list(self.pending_new_devices) if m not in inv]:
             self.pending_new_devices.pop(stale, None)
@@ -328,6 +371,32 @@ class ShellyGuardManager:
                     )
         return resolved
 
+    async def _fetch_single_with_re(
+        self,
+        mac: str,
+        dev: dict[str, Any],
+        inv: dict[str, dict[str, Any]],
+        du: str,
+        dp: str,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any], str]:
+        try:
+            cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
+            return cur, dev, ""
+        except Exception as e:
+            err_msg = f"{type(e).__name__} {str(e)[:120]}"
+            re_hosts = [d for d in inv.values() if d["gen"] != 1 and d["mac"] != mac]
+            re_res = await self._resolve_via_range_extenders({mac: dev}, re_hosts)
+            if mac in re_res:
+                dev_re = dict(dev)
+                dev_re["host"] = re_res[mac]["host"]
+                dev_re["port"] = re_res[mac]["port"]
+                try:
+                    cur = await self.hass.async_add_executor_job(core.fetch_device, dev_re, du, dp)
+                    return cur, dev_re, ""
+                except Exception as e2:
+                    return None, dev_re, str(e2)[:120]
+            return None, dev, err_msg
+
     async def _scan_for_reset_aps(
         self,
         offline_devs: dict[str, dict[str, Any]],
@@ -415,6 +484,7 @@ class ShellyGuardManager:
                 meta = self._touch_meta_snapshot(mac, dev)
                 lifecycle = meta.get("lifecycle") or "active"
                 backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
+                bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
                 try:
                     cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
                 except Exception as e:
@@ -426,7 +496,7 @@ class ShellyGuardManager:
                         if self.offline_runs[mac] >= 2:
                             offline_devs[mac] = dev
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta
+                        mac, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta, backup_count=bcount
                     )
                     continue
 
@@ -445,20 +515,13 @@ class ShellyGuardManager:
                     if re_cfg.get("enable"):
                         range_extenders.append(dev)
 
-                if dev["gen"] == 1:
-                    is_reset = core.gen1_looks_factory(
-                        cur["config"]["settings"], backup and backup["config"]["settings"]
-                    )
-                else:
-                    is_reset = core.gen2_looks_factory(
-                        cur["config"]["config"], backup and backup["config"]
-                    )
+                is_reset = core.payload_looks_factory(cur, backup)
 
                 if is_reset:
                     self.suspect[mac] = self.suspect.get(mac, 0) + 1
                     resets.append(dev["name"])
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=cur, backup=backup, online=True, reset=True, meta=meta
+                        mac, dev, cur=cur, backup=backup, online=True, reset=True, meta=meta, backup_count=bcount
                     )
                     if self.suspect[mac] < 2:
                         continue
@@ -500,16 +563,17 @@ class ShellyGuardManager:
                         else cur
                     )
                     await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, mac, final, keep)
+                    bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
                     saved += 1
                     if core.reset_by_input_enabled(final):
                         risky.append(dev["name"])
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=final, backup=final, online=True, meta=meta
+                        mac, dev, cur=final, backup=final, online=True, meta=meta, backup_count=bcount
                     )
                 except Exception as e:
                     errors.append(f"{dev['name']} backup: {e}")
                     self.device_table[mac] = core.build_device_row(
-                        mac, dev, cur=cur, backup=backup, online=True, err=str(e), meta=meta
+                        mac, dev, cur=cur, backup=backup, online=True, err=str(e), meta=meta, backup_count=bcount
                     )
 
             for stale in [
@@ -529,11 +593,19 @@ class ShellyGuardManager:
                 cmeta = self._touch_meta_snapshot(cmac, dev_re)
                 try:
                     cur_re = await self.hass.async_add_executor_job(core.fetch_device, dev_re, du, dp)
-                    await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, cmac, cur_re, keep)
-                    saved += 1
-                    self.device_table[cmac] = core.build_device_row(
-                        cmac, dev_re, cur=cur_re, backup=cur_re, online=True, meta=cmeta
-                    )
+                    old_bk = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, cmac)
+                    if not core.payload_looks_factory(cur_re, old_bk):
+                        await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, cmac, cur_re, keep)
+                        saved += 1
+                        bcount_re = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, cmac)
+                        self.device_table[cmac] = core.build_device_row(
+                            cmac, dev_re, cur=cur_re, backup=cur_re, online=True, meta=cmeta, backup_count=bcount_re
+                        )
+                    else:
+                        bcount_re = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, cmac)
+                        self.device_table[cmac] = core.build_device_row(
+                            cmac, dev_re, cur=cur_re, backup=old_bk, online=True, reset=True, meta=cmeta, backup_count=bcount_re
+                        )
                 except Exception:
                     if cmac in self.device_table:
                         self.device_table[cmac]["host"] = rinfo["host"]
@@ -561,47 +633,49 @@ class ShellyGuardManager:
             )
             self._publish()
 
-    async def async_check_device(self, mac: str) -> None:
+    async def async_check_device(self, mac: str) -> dict[str, Any]:
         m = core.norm_mac(mac or "")
         if not m:
             _LOGGER.error("[shelly_guard] check_device: invalid mac=%s", mac)
-            return
+            return {"ok": False, "error": f"invalid mac: {mac}"}
         inv = self.shelly_inventory()
         dev = inv.get(m)
         if not dev:
             _LOGGER.error("[shelly_guard] check_device: mac %s not found in HA Shelly inventory", m)
-            return
+            return {"ok": False, "error": f"device {m} not found in Home Assistant"}
         keep = int(self._cfg(CONF_KEEP_VERSIONS, DEFAULT_KEEP_VERSIONS))
         harden = bool(self._cfg(CONF_HARDEN, DEFAULT_HARDEN))
         du = self._cfg(CONF_SHELLY_USER, DEFAULT_SHELLY_USER) or DEFAULT_SHELLY_USER
         dp = self._cfg(CONF_SHELLY_PASSWORD, "") or ""
         meta = self._touch_meta_snapshot(m, dev)
         backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, m)
+        bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, m)
 
-        try:
-            cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
-        except Exception as e:
-            err_msg = f"{type(e).__name__} {str(e)[:120]}"
-            re_hosts = [d for d in inv.values() if d["gen"] != 1 and d["mac"] != m]
-            re_res = await self._resolve_via_range_extenders({m: dev}, re_hosts)
-            if m in re_res:
-                dev = dict(dev)
-                dev["host"] = re_res[m]["host"]
-                dev["port"] = re_res[m]["port"]
-                try:
-                    cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
-                except Exception as e2:
-                    self.device_table[m] = core.build_device_row(
-                        m, dev, cur=None, backup=backup, online=False, err=str(e2), meta=meta
-                    )
-                    self._publish()
-                    return
-            else:
-                self.device_table[m] = core.build_device_row(
-                    m, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta
-                )
-                self._publish()
-                return
+        cur, dev, err_msg = await self._fetch_single_with_re(m, dev, inv, du, dp)
+        if cur is None:
+            self.device_table[m] = core.build_device_row(
+                m, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta, backup_count=bcount
+            )
+            self._publish()
+            return {"ok": False, "mac": m, "name": dev["name"], "error": err_msg}
+
+        meta = self._touch_meta_snapshot(m, dev)
+
+        # Protect existing backup if device appears factory-reset
+        if core.payload_looks_factory(cur, backup):
+            self.device_table[m] = core.build_device_row(
+                m, dev, cur=cur, backup=backup, online=True, reset=True, meta=meta, backup_count=bcount
+            )
+            self.status["last_device_check"] = f"{dev['name']} (RESET!) @ {datetime.datetime.now().strftime('%H:%M:%S')}"
+            await self._save_metadata()
+            self._publish()
+            return {
+                "ok": True,
+                "mac": m,
+                "name": dev["name"],
+                "reset_detected": True,
+                "backup_preserved": (backup or {}).get("saved_at") or "",
+            }
 
         if harden:
             try:
@@ -610,16 +684,110 @@ class ShellyGuardManager:
                     cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
             except Exception as e:
                 _LOGGER.warning("[shelly_guard] single harden %s: %s", dev["name"], e)
+
+        changed = False
         try:
-            await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, m, cur, keep)
+            changed = await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, m, cur, keep)
+            idx_entry = {k: dev.get(k) for k in ("name", "area", "model", "host", "port", "gen")}
+            idx_entry["saved_at"] = cur.get("saved_at")
+            idx_entry["digest"] = cur.get("digest")
+            await self.hass.async_add_executor_job(core.update_index_entry, self.backup_dir, m, idx_entry)
+            bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, m)
         except Exception as e:
             _LOGGER.warning("[shelly_guard] single backup %s: %s", dev["name"], e)
 
-        self.device_table[m] = core.build_device_row(m, dev, cur=cur, backup=cur, online=True, meta=meta)
+        self.device_table[m] = core.build_device_row(
+            m, dev, cur=cur, backup=cur, online=True, meta=meta, backup_count=bcount
+        )
         self.status["offline"] = [o for o in self.status.get("offline", []) if not o.startswith(f"{dev['name']}:")]
         self.status["last_device_check"] = f"{dev['name']} @ {datetime.datetime.now().strftime('%H:%M:%S')}"
         await self._save_metadata()
         self._publish()
+        return {
+            "ok": True,
+            "mac": m,
+            "name": dev["name"],
+            "changed": changed,
+            "digest": cur.get("digest") or "",
+            "saved_at": cur.get("saved_at") or "",
+            "backup_count": bcount,
+        }
+
+    async def async_backup_device(self, mac: str, force: bool = False) -> dict[str, Any]:
+        """Immediately fetch and save a single Shelly's configuration to backup."""
+        m = core.norm_mac(mac or "")
+        if not m:
+            return {"ok": False, "error": f"invalid mac: {mac}"}
+        inv = self.shelly_inventory()
+        dev = inv.get(m)
+        if not dev:
+            return {"ok": False, "error": f"device {m} not found in Home Assistant"}
+        keep = int(self._cfg(CONF_KEEP_VERSIONS, DEFAULT_KEEP_VERSIONS))
+        du = self._cfg(CONF_SHELLY_USER, DEFAULT_SHELLY_USER) or DEFAULT_SHELLY_USER
+        dp = self._cfg(CONF_SHELLY_PASSWORD, "") or ""
+        meta = self._touch_meta_snapshot(m, dev)
+        backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, m)
+        bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, m)
+
+        cur, dev, err_msg = await self._fetch_single_with_re(m, dev, inv, du, dp)
+        if cur is None:
+            self.device_table[m] = core.build_device_row(
+                m, dev, cur=None, backup=backup, online=False, err=err_msg, meta=meta, backup_count=bcount
+            )
+            self._publish()
+            return {"ok": False, "mac": m, "name": dev["name"], "error": err_msg}
+
+        meta = self._touch_meta_snapshot(m, dev)
+        if not force and core.payload_looks_factory(cur, backup):
+            self.device_table[m] = core.build_device_row(
+                m, dev, cur=cur, backup=backup, online=True, reset=True, meta=meta, backup_count=bcount
+            )
+            self._publish()
+            return {
+                "ok": False,
+                "mac": m,
+                "name": dev["name"],
+                "reset_detected": True,
+                "backup_preserved": (backup or {}).get("saved_at") or "",
+                "error": "Device appears factory-reset; existing backup preserved.",
+            }
+
+        try:
+            changed = await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, m, cur, keep)
+            idx_entry = {k: dev.get(k) for k in ("name", "area", "model", "host", "port", "gen")}
+            idx_entry["saved_at"] = cur.get("saved_at")
+            idx_entry["digest"] = cur.get("digest")
+            await self.hass.async_add_executor_job(core.update_index_entry, self.backup_dir, m, idx_entry)
+            bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, m)
+        except Exception as e:
+            _LOGGER.error("[shelly_guard] backup_device %s: %s", dev["name"], e)
+            return {"ok": False, "mac": m, "name": dev["name"], "error": str(e)}
+
+        now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+        self.device_table[m] = core.build_device_row(
+            m, dev, cur=cur, backup=cur, online=True, meta=meta, backup_count=bcount
+        )
+        self.status["offline"] = [o for o in self.status.get("offline", []) if not o.startswith(f"{dev['name']}:")]
+        self.status["last_backup"] = now_iso
+        self.status["last_device_backup"] = f"{dev['name']} @ {datetime.datetime.now().strftime('%H:%M:%S')}"
+        await self._save_metadata()
+        self._publish()
+        return {
+            "ok": True,
+            "mac": m,
+            "name": dev["name"],
+            "changed": changed,
+            "digest": cur.get("digest") or "",
+            "saved_at": cur.get("saved_at") or "",
+            "backup_count": bcount,
+        }
+
+    async def async_get_device_backups(self, mac: str) -> dict[str, Any]:
+        m = core.norm_mac(mac or "")
+        if not m:
+            return {"ok": False, "error": "invalid mac", "backups": []}
+        items = await self.hass.async_add_executor_job(core.list_backups, self.backup_dir, m)
+        return {"ok": True, "mac": m, "backups": items}
 
     async def async_set_metadata(
         self,
@@ -634,16 +802,7 @@ class ShellyGuardManager:
         if not m:
             return
         meta = self.metadata.setdefault(m, {"lifecycle": "active", "known": True})
-        if purchase_date is not None:
-            meta["purchase_date"] = str(purchase_date).strip()
-        if warranty_months is not None:
-            meta["warranty_months"] = int(warranty_months)
-        if vendor is not None:
-            meta["vendor"] = str(vendor).strip()
-        if invoice_number is not None:
-            meta["invoice_number"] = str(invoice_number).strip()
-        if notes is not None:
-            meta["notes"] = str(notes).strip()
+        self._apply_meta_fields(meta, purchase_date, warranty_months, vendor, invoice_number, notes)
         await self._save_metadata()
         if m in self.device_table:
             w = core.compute_warranty(meta)
@@ -662,6 +821,8 @@ class ShellyGuardManager:
         meta = self.metadata.setdefault(m, {"known": True})
         meta["lifecycle"] = lifecycle
         meta["known"] = True
+        meta["pending_new"] = False
+        self.pending_new_devices.pop(m, None)
         today = datetime.date.today().isoformat()
         if lifecycle == "faulty":
             meta["faulty_at"] = today
@@ -681,22 +842,51 @@ class ShellyGuardManager:
             self.device_table[m]["replaced_at"] = meta.get("replaced_at") or ""
         self._publish()
 
-    async def async_confirm_new_device(self, mac: str) -> None:
+    async def async_confirm_new_device(
+        self,
+        mac: str,
+        purchase_date: str | None = None,
+        warranty_months: int | None = None,
+        vendor: str | None = None,
+        invoice_number: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
         m = core.norm_mac(mac or "")
         if not m:
-            return
+            return {"ok": False, "error": "invalid mac"}
         meta = self.metadata.setdefault(m, {"lifecycle": "active"})
         meta["known"] = True
+        meta["pending_new"] = False
         meta["lifecycle"] = "active"
+        self._apply_meta_fields(meta, purchase_date, warranty_months, vendor, invoice_number, notes)
         self.pending_new_devices.pop(m, None)
         await self._save_metadata()
-        await self.async_check_device(m)
+        if m in self.device_table:
+            w = core.compute_warranty(meta)
+            self.device_table[m].update(
+                vendor=meta.get("vendor") or "",
+                invoice_number=meta.get("invoice_number") or "",
+                notes=meta.get("notes") or "",
+                **w,
+            )
+        chk = await self.async_check_device(m)
+        self._publish()
+        return {"ok": True, "mac": m, "check": chk}
 
-    async def async_replace_device(self, old_mac: str, new_mac: str) -> dict[str, Any]:
+    async def async_replace_device(
+        self,
+        old_mac: str,
+        new_mac: str,
+        purchase_date: str | None = None,
+        warranty_months: int | None = None,
+        vendor: str | None = None,
+        invoice_number: str | None = None,
+        notes: str | None = None,
+    ) -> dict[str, Any]:
         om = core.norm_mac(old_mac or "")
         nm = core.norm_mac(new_mac or "")
         if not om or not nm or om == nm:
-            return {"error": "invalid old_mac/new_mac"}
+            return {"ok": False, "error": "invalid old_mac/new_mac"}
         res = await self.async_restore(mac=nm, dry_run=False, backup_mac=om)
         if res.get("error"):
             await self._notify("Erro na substituição Shelly", f"{om} → {nm}: {res['error']}")
@@ -707,11 +897,14 @@ class ShellyGuardManager:
         old_meta["replaced_by"] = nm
         old_meta["replaced_at"] = today
         old_meta["known"] = True
+        old_meta["pending_new"] = False
 
         new_meta = self.metadata.setdefault(nm, {})
         new_meta["lifecycle"] = "active"
         new_meta["known"] = True
+        new_meta["pending_new"] = False
         new_meta["replaces"] = om
+        self._apply_meta_fields(new_meta, purchase_date, warranty_months, vendor, invoice_number, notes)
         self.pending_new_devices.pop(nm, None)
         await self._save_metadata()
 
@@ -740,17 +933,30 @@ class ShellyGuardManager:
         index: dict[str, Any] = {}
         changed = 0
         for mac, dev in inv.items():
+            meta = self._touch_meta_snapshot(mac, dev)
+            old_bk = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, mac)
             try:
                 payload = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
+                if core.payload_looks_factory(payload, old_bk):
+                    bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
+                    self.device_table[mac] = core.build_device_row(
+                        mac, dev, cur=payload, backup=old_bk, online=True, reset=True, meta=meta, backup_count=bcount
+                    )
+                    continue
                 if await self.hass.async_add_executor_job(core.write_backup, self.backup_dir, mac, payload, keep):
                     changed += 1
+                bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, mac)
                 index[mac] = {k: dev[k] for k in ("name", "area", "model", "host", "port", "gen")}
                 index[mac]["saved_at"] = payload["saved_at"]
-                self.device_table[mac] = core.build_device_row(mac, dev, cur=payload, backup=payload, online=True)
+                index[mac]["digest"] = payload.get("digest") or ""
+                self.device_table[mac] = core.build_device_row(
+                    mac, dev, cur=payload, backup=payload, online=True, meta=meta, backup_count=bcount
+                )
             except Exception as e:
                 offline.append(dev["name"])
                 _LOGGER.info("[shelly_guard] backup %s (%s): %s", dev["name"], dev["host"], e)
         await self.hass.async_add_executor_job(core.write_index, self.backup_dir, index)
+        await self._save_metadata()
         self.status.update(
             devices=len(inv),
             offline=offline,
@@ -765,19 +971,40 @@ class ShellyGuardManager:
         host: str | None = None,
         dry_run: bool = True,
         backup_mac: str | None = None,
+        version: str | None = None,
     ) -> dict[str, Any]:
         m = core.norm_mac(mac or "")
         if not m:
-            return {"error": "invalid mac"}
+            return {"ok": False, "error": "invalid mac"}
         inv = self.shelly_inventory()
-        dev = dict(inv.get(m) or {"mac": m, "host": host, "port": 80, "gen": None, "name": m, "area": None, "model": None})
-        if host:
-            dev["host"] = host
+        meta = self.metadata.get(m) or {}
+        fallback_dev = {
+            "mac": m,
+            "host": meta.get("last_host") or "",
+            "port": int(meta.get("last_port") or 80),
+            "gen": meta.get("last_gen"),
+            "name": meta.get("last_name") or m,
+            "area": meta.get("last_area"),
+            "model": meta.get("last_model"),
+        }
+        dev = dict(inv.get(m) or fallback_dev)
+        if host and str(host).strip():
+            h_clean = str(host).strip()
+            if ":" in h_clean:
+                hp, pp = h_clean.rsplit(":", 1)
+                dev["host"] = hp
+                if pp.isdigit():
+                    dev["port"] = int(pp)
+            else:
+                dev["host"] = h_clean
+        if not dev.get("host"):
+            return {"ok": False, "error": f"no host known for {m}; specify host IP"}
+
         bmac = core.norm_mac(backup_mac) if backup_mac else m
-        backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, bmac or m)
+        backup = await self.hass.async_add_executor_job(core.read_backup, self.backup_dir, bmac or m, version)
         if not backup:
-            _LOGGER.error("[shelly_guard] no backup for %s", bmac or m)
-            return {"error": f"no backup for {bmac or m}"}
+            _LOGGER.error("[shelly_guard] no backup for %s (version=%s)", bmac or m, version)
+            return {"ok": False, "error": f"no backup found for {bmac or m}"}
         du = self._cfg(CONF_SHELLY_USER, DEFAULT_SHELLY_USER) or DEFAULT_SHELLY_USER
         dp = self._cfg(CONF_SHELLY_PASSWORD, "") or ""
         wsec = self._cfg(CONF_WIFI_SECRETS_FILE, DEFAULT_WIFI_SECRETS_FILE) or ""
@@ -785,8 +1012,36 @@ class ShellyGuardManager:
         done, failed = await self.hass.async_add_executor_job(
             core.restore_device, dev, backup, dry_run, du, dp, wsec, wpass
         )
-        _LOGGER.warning("[shelly_guard] restore %s dry_run=%s: %d ok, %d issues", dev["name"], dry_run, len(done), len(failed))
-        return {"done": done, "failed": failed}
+        _LOGGER.warning(
+            "[shelly_guard] restore %s (ver=%s) dry_run=%s: %d ok, %d issues",
+            dev["name"],
+            version or "latest",
+            dry_run,
+            len(done),
+            len(failed),
+        )
+        if not dry_run and m in inv:
+            try:
+                cur = await self.hass.async_add_executor_job(core.fetch_device, dev, du, dp)
+                bcount = await self.hass.async_add_executor_job(core.count_backups, self.backup_dir, m)
+                self.device_table[m] = core.build_device_row(
+                    m, dev, cur=cur, backup=backup, online=True, meta=meta, backup_count=bcount
+                )
+                self._publish()
+            except Exception:
+                pass
+        return {
+            "ok": True,
+            "dry_run": dry_run,
+            "mac": m,
+            "name": dev.get("name") or m,
+            "backup_mac": bmac or m,
+            "version": version or "latest.json",
+            "backup_saved_at": backup.get("saved_at") or "",
+            "backup_digest": backup.get("digest") or "",
+            "done": done,
+            "failed": failed,
+        }
 
     async def async_scan_now(self) -> None:
         inv = self.shelly_inventory()

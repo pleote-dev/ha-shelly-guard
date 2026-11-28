@@ -142,7 +142,9 @@ def wifi_creds(
 
         with open(path, encoding="utf-8") as f:
             sec = yaml.safe_load(f) or {}
-        return sec.get(ssid_key), sec.get(pass_key) or fallback_pass
+        ssid = next((sec.get(k) for k in (ssid_key, "wifi_ssid", "ssid") if sec.get(k)), None)
+        pw = next((sec.get(k) for k in (pass_key, "wifi_password", "wifi_pass") if sec.get(k)), None)
+        return ssid, pw or fallback_pass
     except Exception:
         return None, fallback_pass
 
@@ -177,8 +179,14 @@ def write_backup(backup_dir: str, mac: str, payload: dict[str, Any], keep: int) 
     return changed
 
 
-def read_backup(backup_dir: str, mac: str) -> dict[str, Any] | None:
-    p = os.path.join(backup_dir, mac, "latest.json")
+def read_backup(backup_dir: str, mac: str, version: str | None = None) -> dict[str, Any] | None:
+    fname = "latest.json"
+    if version and str(version).strip() not in ("", "latest", "latest.json"):
+        cand = os.path.basename(str(version).strip())
+        if not cand.endswith(".json"):
+            return None
+        fname = cand
+    p = os.path.join(backup_dir, mac, fname)
     if not os.path.exists(p):
         return None
     try:
@@ -188,10 +196,77 @@ def read_backup(backup_dir: str, mac: str) -> dict[str, Any] | None:
         return None
 
 
+def count_backups(backup_dir: str, mac: str) -> int:
+    d = os.path.join(backup_dir, mac)
+    if not os.path.isdir(d):
+        return 0
+    try:
+        files = os.listdir(d)
+    except Exception:
+        return 0
+    snaps = sum(1 for x in files if x[:2] == "20" and x.endswith(".json"))
+    if snaps > 0:
+        return snaps
+    return 1 if "latest.json" in files else 0
+
+
+def list_backups(backup_dir: str, mac: str) -> list[dict[str, Any]]:
+    d = os.path.join(backup_dir, mac)
+    if not os.path.isdir(d):
+        return []
+    try:
+        files = os.listdir(d)
+    except Exception:
+        return []
+    ordered: list[str] = []
+    if "latest.json" in files:
+        ordered.append("latest.json")
+    ordered.extend(sorted((x for x in files if x[:2] == "20" and x.endswith(".json")), reverse=True))
+    out: list[dict[str, Any]] = []
+    for fname in ordered:
+        p = os.path.join(d, fname)
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+            out.append(
+                {
+                    "file": fname,
+                    "is_latest": fname == "latest.json",
+                    "saved_at": data.get("saved_at") or "",
+                    "digest": data.get("digest") or "",
+                    "fw": short_fw(data.get("fw")),
+                    "gen": int(data.get("gen") or 1),
+                    "name": data.get("name") or "",
+                }
+            )
+        except Exception:
+            continue
+    return out
+
+
 def write_index(backup_dir: str, index: dict[str, Any]) -> None:
     os.makedirs(backup_dir, exist_ok=True)
-    with open(os.path.join(backup_dir, "index.json"), "w", encoding="utf-8") as f:
+    p = os.path.join(backup_dir, "index.json")
+    tmp = f"{p}.{os.getpid()}.{time.time_ns()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(index, f, indent=1, sort_keys=True)
+    os.replace(tmp, p)
+
+
+def update_index_entry(backup_dir: str, mac: str, entry_data: dict[str, Any]) -> None:
+    os.makedirs(backup_dir, exist_ok=True)
+    p = os.path.join(backup_dir, "index.json")
+    idx: dict[str, Any] = {}
+    if os.path.exists(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                idx = loaded
+        except Exception:
+            idx = {}
+    idx[mac] = entry_data
+    write_index(backup_dir, idx)
 
 
 def read_metadata(backup_dir: str) -> dict[str, dict[str, Any]]:
@@ -647,6 +722,21 @@ def gen2_looks_factory(cfg: dict[str, Any], backup: dict[str, Any] | None) -> bo
     return bool(had_name) and not now_name
 
 
+def payload_looks_factory(payload: dict[str, Any] | None, backup: dict[str, Any] | None) -> bool:
+    if not payload or not backup:
+        return False
+    gen = int(payload.get("gen") or 1)
+    if gen == 1:
+        return gen1_looks_factory(
+            (payload.get("config") or {}).get("settings") or {},
+            (backup.get("config") or {}).get("settings"),
+        )
+    return gen2_looks_factory(
+        (payload.get("config") or {}).get("config") or {},
+        backup.get("config"),
+    )
+
+
 def classify_config(
     dev: dict[str, Any],
     cur: dict[str, Any] | None = None,
@@ -709,10 +799,12 @@ def build_device_row(
     reset: bool = False,
     err: str = "",
     meta: dict[str, Any] | None = None,
+    backup_count: int | None = None,
 ) -> dict[str, Any]:
     bk = backup or cur
     m = meta or {}
     w = compute_warranty(m)
+    has_bk = bool(bk and bk.get("saved_at"))
     return {
         "mac": mac,
         "name": dev.get("name") or m.get("last_name") or mac,
@@ -723,8 +815,10 @@ def build_device_row(
         "model": dev.get("model") or m.get("last_model") or "",
         "online": bool(online),
         "reset": bool(reset),
-        "has_backup": bool(bk and bk.get("saved_at")),
+        "has_backup": has_bk,
         "backup_at": (bk or {}).get("saved_at") or "",
+        "backup_digest": (bk or {}).get("digest") or "",
+        "backup_count": int(backup_count) if backup_count is not None else (1 if has_bk else 0),
         "config_type": classify_config(dev, cur, backup),
         "fw": extract_fw(dev, cur, backup),
         "update_entity": dev.get("update_entity") or "",
@@ -736,6 +830,7 @@ def build_device_row(
         "faulty_reason": m.get("faulty_reason") or "",
         "replaced_by": m.get("replaced_by") or "",
         "replaced_at": m.get("replaced_at") or "",
+        "replaces": m.get("replaces") or "",
         "vendor": m.get("vendor") or "",
         "invoice_number": m.get("invoice_number") or "",
         "notes": m.get("notes") or "",

@@ -6,3 +6,7 @@ router_snapshot.json
 secrets.yaml
 backups/
 *.log
+AGENTS.md
+GEMINI.md
+.agents/
+.agent/

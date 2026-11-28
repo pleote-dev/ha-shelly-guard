@@ -31,12 +31,13 @@
   * Respeita `host:port` (porta NAT `mport`) em todas as operações;
   * Consulta `WiFi.ListAPClients` nos Shellys com Range Extender ativo antes de disparar falsos alertas de reset;
   * Atualiza automaticamente o `host` e `port` da integração Shelly no Home Assistant quando um dispositivo está ligado atrás de um Range Extender.
-* **Lista de Avariados & Assistente de Substituição:**
+* **Lista de Avariados & Assistente de Novos Shellys:**
   * Marca manualmente qualquer dispositivo como **Avariado** (preservando o último backup e os dados de fatura/garantia mesmo que seja removido do HA);
-  * Quando entra um **Shelly novo** na rede, o dashboard abre uma janela para escolher se é um **dispositivo novo** ou se vem **substituir um dispositivo avariado/offline**, restaurando automaticamente o backup no equipamento novo e arquivando o antigo como *Substituído*.
-* **Registo de Compra & Garantia:**
-  * Guarda por dispositivo: **data de compra**, **duração da garantia** (36 meses por defeito), **vendedor/loja**, **nº de fatura** e notas (em `/share/shelly_guard/metadata.json`);
-  * Mostra na tabela a validade da garantia (*Em garantia*, *Expira em breve*, *Expirada*) e destaca loja + nº de fatura nos dispositivos avariados para pedir RMA rapidamente.
+  * Sempre que entra **qualquer Shelly novo** no Home Assistant, abre um assistente que permite preencher logo **data de compra, garantia, loja, fatura e notas** e escolher se é um **dispositivo novo** (aplicando proteção e fazendo o primeiro backup) ou se vem **substituir um dispositivo da lista de Avariados/Offline** (restaurando automaticamente o backup no equipamento novo e arquivando o antigo como *Substituído*).
+* **Menu Individual por Dispositivo (Backup Now, Restore por Versão, Check & Garantia):**
+  * Mostra para cada Shelly a data/hora exata do último backup, o hash SHA-256 (`digest`), o número de versões históricas guardadas e o estado da proteção contra reset por interruptor;
+  * Botões individuais para **Check**, **Backup Now** (com confirmação imediata se houve alterações de parâmetros gravadas num novo snapshot), **Restore** (escolha entre o último backup ou versões datadas anteriores, **Simular / Dry Run** e **Restaurar Agora** com IP opcional), **Upgrade de Firmware** e **Web UI**;
+  * Guarda **data de compra**, **duração da garantia** (36 meses por defeito), **vendedor/loja**, **nº de fatura** e notas (em `/share/shelly_guard/metadata.json`), destacando loja + fatura nos dispositivos avariados para pedidos de RMA.
 * **Dashboard dedicado na barra lateral (`Shelly Guard`):**
   * Servido diretamente pela integração via API autenticada (`/api/shelly_guard/state`), com tradução automática **Português / Inglês** consoante o idioma do utilizador no Home Assistant;
   * Atalhos no header para **Reload**, **Backup All** e **Check Completo**;
@@ -71,9 +72,10 @@ Copia a pasta `custom_components/shelly_guard` para `/config/custom_components/s
 | Serviço | Descrição |
 | --- | --- |
 | `shelly_guard.check` | Verifica todos os Shellys, aplica *hardening*, resolve Range Extender / resets e atualiza backups. |
-| `shelly_guard.check_device` | Executa o check e backup de um único dispositivo (`mac: "AABBCCDDEEFF"`). |
+| `shelly_guard.check_device` | Executa check, *hardening* e backup de um único dispositivo (`mac: "AABBCCDDEEFF"`), protegendo o backup se detetar modo de fábrica. |
 | `shelly_guard.backup_all` | Faz backup imediato de todos os dispositivos Shelly. |
-| `shelly_guard.restore` | Restaura um dispositivo a partir do backup (`mac`, `host` opcional, `dry_run: true\|false`, `backup_mac` para clonar em equipamento de substituição). |
+| `shelly_guard.backup_device` | Faz backup imediato de um único Shelly (`mac`, `force` opcional), criando nova versão datada sempre que mudam parâmetros. |
+| `shelly_guard.restore` | Restaura um dispositivo a partir do backup (`mac`, `version` opcional, `host` opcional, `dry_run: true\|false`, `backup_mac` para clonar em substituição). |
 | `shelly_guard.scan` | Pede aos Shellys Gen2+ online um `WiFi.Scan` à procura de APs de reset. |
 | `shelly_guard.audit` | Lista (e com `fix: true` remove) scripts e webhooks duplicados em Gen2+. |
 | `shelly_guard.router_dhcp` | Compara/adiciona reservas DHCP num router ASUS (ignora clientes em Range Extender). |

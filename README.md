@@ -31,12 +31,13 @@
   * Uses `host:port` (NAT `mport`) across all operations;
   * Queries `WiFi.ListAPClients` on Range Extender hosts before raising false factory-reset alerts;
   * Automatically updates the Home Assistant Shelly integration's `host` and `port` when a device connects through a Range Extender.
-* **Faulty List & Replacement Wizard:**
+* **Faulty List & New Device Onboarding Wizard:**
   * Manually mark any device as **Faulty** (preserving its latest backup and invoice/warranty details even if removed from HA);
-  * When a **new Shelly** joins Home Assistant, a modal lets you choose whether it is a **brand-new device** or a **replacement for a faulty/offline device**, automatically restoring the old device's backup onto the new hardware and archiving the old unit as *Replaced*.
-* **Purchase & Warranty Tracking:**
-  * Stores **purchase date**, **warranty duration** (default 36 months), **vendor/store**, **invoice number**, and notes per device (in `/share/shelly_guard/metadata.json`);
-  * Displays warranty status badges (*Valid*, *Expiring soon*, *Expired*) and highlights store + invoice on faulty units for quick RMA claims.
+  * Whenever **any new Shelly** joins Home Assistant, an onboarding modal lets you immediately fill in its **purchase date, warranty, store, invoice, and notes** while choosing whether it is a **brand-new device** (running initial hardening + backup) or a **replacement for a faulty/offline device** (automatically restoring the old device's backup onto the new hardware and archiving the old unit as *Replaced*).
+* **Per-Device Menu (Backup Now, Versioned Restore, Check & Warranty):**
+  * Individual device modal displays exact backup timestamp, SHA-256 snapshot digest, version count, and switch-reset protection status;
+  * Direct per-device buttons for **Check**, **Backup Now** (with live confirmation of whether parameter changes created a new snapshot), **Restore** (choose latest or any historical snapshot, preview via **Dry Run**, or **Restore Now** with optional IP override), **Firmware Upgrade**, and **Web UI**;
+  * Stores **purchase date**, **warranty duration** (default 36 months), **vendor/store**, **invoice number**, and notes per device (in `/share/shelly_guard/metadata.json`), highlighting store + invoice on faulty units for quick RMA claims.
 * **Dedicated Sidebar Dashboard (`Shelly Guard`):**
   * Automatically served by the integration via an authenticated API (`/api/shelly_guard/state`) with automatic **English / Portuguese** UI localization following your Home Assistant user language;
   * Header shortcuts for **Reload**, **Backup All**, and **Full Check**;
@@ -71,9 +72,10 @@ Copy `custom_components/shelly_guard` into `/config/custom_components/shelly_gua
 | Service | Description |
 | --- | --- |
 | `shelly_guard.check` | Checks all Shellys, applies hardening, resolves Range Extender clients / resets, and updates backups. |
-| `shelly_guard.check_device` | Runs check and backup for a single device (`mac: "AABBCCDDEEFF"`). |
+| `shelly_guard.check_device` | Runs check, hardening, and backup for a single device (`mac: "AABBCCDDEEFF"`), protecting saved backups if factory-reset is detected. |
 | `shelly_guard.backup_all` | Immediately backs up all reachable Shelly devices. |
-| `shelly_guard.restore` | Restores a device from backup (`mac`, optional `host`, `dry_run: true\|false`, optional `backup_mac` for hardware replacement). |
+| `shelly_guard.backup_device` | Immediately backs up a single Shelly device (`mac`, optional `force`), recording a new snapshot version whenever parameters changed. |
+| `shelly_guard.restore` | Restores a device from backup (`mac`, optional `version`, optional `host`, `dry_run: true\|false`, optional `backup_mac` for hardware replacement). |
 | `shelly_guard.scan` | Asks online Gen2+ Shellys to scan Wi-Fi for factory-reset APs. |
 | `shelly_guard.audit` | Lists (and with `fix: true` removes) duplicate scripts and webhooks on Gen2+. |
 | `shelly_guard.router_dhcp` | Compares/adds static DHCP reservations on an ASUS router (skips Range Extender clients). |

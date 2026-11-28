@@ -4,7 +4,7 @@ check:
 
 check_device:
   name: Check single device
-  description: Run check, hardening, Range Extender lookup and backup for a single Shelly device.
+  description: Run check, hardening, Range Extender lookup and backup for a single Shelly device (protects backup if factory reset is detected).
   fields:
     mac:
       name: MAC address
@@ -17,9 +17,27 @@ backup_all:
   name: Backup all devices
   description: Immediately back up the configuration of every reachable Shelly known to Home Assistant.
 
+backup_device:
+  name: Backup single device
+  description: Immediately fetch and save the configuration of a single Shelly device, recording a new snapshot version whenever parameters changed.
+  fields:
+    mac:
+      name: MAC address
+      description: Device MAC address (with or without colons).
+      required: true
+      selector:
+        text:
+    force:
+      name: Force overwrite on factory-reset state
+      description: Overwrite the existing backup even if the device currently appears factory-reset.
+      default: false
+      required: false
+      selector:
+        boolean:
+
 restore:
   name: Restore device from backup
-  description: Restore a Shelly device configuration from its latest backup (or another device's backup).
+  description: Restore a Shelly device configuration from its latest backup, a specific historical version, or another device's backup.
   fields:
     mac:
       name: MAC address
@@ -35,13 +53,19 @@ restore:
         text:
     dry_run:
       name: Dry run
-      description: If true, only logs the planned restore steps without modifying the device.
+      description: If true, only returns/logs the planned restore steps without modifying the device.
       default: true
       selector:
         boolean:
     backup_mac:
       name: Source backup MAC
       description: Optional MAC of another device whose backup should be restored onto this device (replacement hardware).
+      required: false
+      selector:
+        text:
+    version:
+      name: Backup snapshot file
+      description: Optional snapshot filename (e.g. latest.json or YYYYMMDD-HHMMSS_digest.json). Defaults to latest.json.
       required: false
       selector:
         text:
@@ -144,17 +168,44 @@ set_lifecycle:
 
 confirm_new_device:
   name: Confirm newly detected Shelly as new
-  description: Dismiss the replacement prompt and register a newly detected Shelly as a brand-new device.
+  description: Register a newly detected Shelly as a brand-new device, optionally saving its warranty details and taking an initial backup.
   fields:
     mac:
       name: MAC address
       required: true
       selector:
         text:
+    purchase_date:
+      name: Purchase date (YYYY-MM-DD)
+      required: false
+      selector:
+        text:
+    warranty_months:
+      name: Warranty duration (months)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 120
+    vendor:
+      name: Vendor / Store
+      required: false
+      selector:
+        text:
+    invoice_number:
+      name: Invoice / Order number
+      required: false
+      selector:
+        text:
+    notes:
+      name: Notes
+      required: false
+      selector:
+        text:
 
 replace_device:
   name: Replace faulty Shelly with a new device
-  description: Restore the latest backup of a faulty/offline Shelly onto a new Shelly and archive the old device as replaced.
+  description: Restore the latest backup of a faulty/offline Shelly onto a new Shelly, archive the old device as replaced, and optionally save warranty details for the replacement unit.
   fields:
     old_mac:
       name: Faulty / old device MAC
@@ -164,5 +215,32 @@ replace_device:
     new_mac:
       name: Replacement / new device MAC
       required: true
+      selector:
+        text:
+    purchase_date:
+      name: Purchase date (YYYY-MM-DD)
+      required: false
+      selector:
+        text:
+    warranty_months:
+      name: Warranty duration (months)
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 120
+    vendor:
+      name: Vendor / Store
+      required: false
+      selector:
+        text:
+    invoice_number:
+      name: Invoice / Order number
+      required: false
+      selector:
+        text:
+    notes:
+      name: Notes
+      required: false
       selector:
         text:

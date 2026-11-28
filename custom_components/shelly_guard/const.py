@@ -1,7 +1,7 @@
 """Constants for the Shelly Guard integration."""
 
 DOMAIN = "shelly_guard"
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 
 CONF_BACKUP_DIR = "backup_dir"
 CONF_KEEP_VERSIONS = "keep_versions"
@@ -38,5 +38,7 @@ HTTP_TIMEOUT = 8
 STATIC_URL_PATH = "/shelly_guard_static"
 PANEL_URL_PATH = "shelly-guard"
 API_STATE_PATH = "/api/shelly_guard/state"
+API_BACKUPS_PATH = "/api/shelly_guard/backups/{mac}"
+API_ACTION_PATH = "/api/shelly_guard/action"
 
 SIGNAL_UPDATE = f"{DOMAIN}_update"
